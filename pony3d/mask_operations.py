@@ -1,9 +1,9 @@
 import logging
 import numpy as np
 import os
-import shutil
-from scipy.ndimage import binary_dilation, minimum_filter
 import scipy.special
+import shutil
+from scipy.ndimage import binary_dilation, minimum_filter, label
 from pony3d.file_operations import get_image, flush_image
 
 def get_mask_and_noise(input_image, threshold, boxsize, dilate):
@@ -184,8 +184,10 @@ def count_islands(input_fits, orig_fits, idx):
     """
     idx = str(idx).zfill(5)
     input_image = get_image(input_fits)
-    input_image = input_image.byteswap().newbyteorder()  # Fix for potential endianness issue
+    input_image = input_image.byteswap().view(input_image.dtype.newbyteorder())
+#    input_image = input_image.byteswap().newbyteorder()  # Fix for 
+potential endianness issue
     labeled_mask_image, n_islands = label(input_image)
     orig_image = get_image(orig_fits)
-    rms = np.std(orig_image)
+    rms = np.nanstd(orig_image)
     logging.info(f'[C{idx}] Clean parameters: {input_fits} {n_islands} {rms}')

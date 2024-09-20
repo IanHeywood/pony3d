@@ -177,19 +177,21 @@ def filter_mask(mask_subset, minchans, specdilate, masktag, filtertag, overwrite
         island_sizes = np.zeros(n_islands + 1, dtype=int)
         flat_indices = np.where(labeled_cube > 0)
         flat_labels = labeled_cube[flat_indices]
+        linear_indices = flat_labels * cube.shape[2] + flat_indices[2]
+        counts = np.bincount(linear_indices, minlength=(n_islands + 1) * cube.shape[2])
+        counts = counts.reshape(n_islands + 1, cube.shape[2])
+    
+    # Check the count of unique elements along the specified axis
+        unique_counts = np.sum(counts > 0, axis=1)
 
-        # Calculate unique count of elements along the specified axis for each label
-        unique_counts = np.zeros_like(island_sizes)
-        # Get unique labels and counts along the specified axis
-        unique, unique_counts[flat_labels] = np.unique(flat_labels * (cube.shape[2] + 1) + flat_indices[2], return_counts=True)
-
-        # Identify small islands that need to be removed
+    # Identify small islands that need to be removed
         small_islands = np.where(unique_counts < minchans)[0]
 
-        # Remove small islands in a vectorized manner
+    # Create a mask for the small islands
         mask = np.isin(labeled_cube, small_islands)
-        cube[mask] = False
 
+    # Remove small islands in a vectorized manner
+        cube[mask] = False
 
     # Deprecated dilation method coupled to single channel rejection
     # logging.info(f'[{log_prefix}_{idx}] Filtering image')

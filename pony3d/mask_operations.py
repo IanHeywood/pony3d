@@ -11,7 +11,7 @@ from scipy.ndimage import binary_dilation, binary_erosion, minimum_filter, label
 from pony3d.file_operations import get_image, flush_image, load_cube
 
 
-def get_mask_and_noise(input_image, threshold, boxsize):
+def get_mask_and_noise(input_image, threshold, boxsize, trim):
     """
     Generate a mask and noise image from the input image.
 
@@ -35,6 +35,11 @@ def get_mask_and_noise(input_image, threshold, boxsize):
     median_noise = np.median(noise_image)
     noise_image[noise_image < median_noise] = median_noise
     mask_image = input_image > threshold * noise_image
+    if trim > 0:
+        trim_mask = ~numpy.isnan(input_image)
+        trim_mask = binary_erosion(trim_mask,iterations = trim)
+        mask_image[~trim_mask] = 0.0
+        noise_image[~trim_mask] = 0.0
     return mask_image, noise_image
 
 
@@ -64,18 +69,17 @@ def make_mask(input_fits, threshold, boxsize, dilate, trim, regionmask, invert, 
 
     logging.info(f'[{log_prefix}_{idx}] Reading {input_fits}')
     input_image = get_image(input_fits)
+ 
     if invert:
         logging.info(f'[{log_prefix}_{idx}] Inverting {input_fits}')
         input_image *= -1.0
     logging.info(f'[{log_prefix}_{idx}] Finding islands')
-    mask_image, noise_image = get_mask_and_noise(input_image, threshold, boxsize)
+    mask_image, noise_image = get_mask_and_noise(input_image, threshold, boxsize, trim)
+ 
     if dilate > 0:
         logging.info(f'[{log_prefix}_{idx}] Dilating islands with {dilate} iterations along spatial axes')
         mask_image = binary_dilation(mask_image, iterations=dilate)
-    if trim > 0:
-        logging.info(f'[{log_prefix}_{idx}] Trimming boundaries with {trim} iterations')
-        mask_image = binary_erosion(mask_image, iterations = trim)
-        noise_image = binary_erosion(noise_image, iterations = trim)
+    
     logging.info(f'[{log_prefix}_{idx}] Writing mask image {mask_fits}')
     shutil.copyfile(input_fits, mask_fits)
     flush_image(mask_image, mask_fits)
@@ -122,13 +126,9 @@ def make_averaged_mask(input_fits_subset, threshold, boxsize, dilate, invert, tr
         logging.info(f'[{log_prefix}_{idx}] Inverting subset')
         mean_image *= -1.0
     logging.info(f'[{log_prefix}_{idx}] Finding islands')
-    mask_image, noise_image = get_mask_and_noise(mean_image, threshold, boxsize, dilate)
+    mask_image, noise_image = get_mask_and_noise(mean_image, threshold, boxsize, dilate, trim)
     if dilate > 0:
         mask_image = binary_dilation(mask_image, iterations=dilate)
-    if trim > 0:
-        logging.info(f'[{log_prefix}_{idx}] Trimming boundaries with {trim} iterations')
-        mask_image = binary_erosion(mask_image, iterations = trim)
-        noise_image = binary_erosion(noise_image, iterations = trim)
     logging.info(f'[{log_prefix}_{idx}] Writing mask image {mask_fits}')
     shutil.copyfile(input_fits, mask_fits)
     flush_image(mask_image, mask_fits)

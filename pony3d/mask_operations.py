@@ -38,7 +38,7 @@ def get_mask_and_noise(input_image, threshold, boxsize):
     return mask_image, noise_image
 
 
-def make_mask(input_fits, threshold, boxsize, dilate, invert, opdir, masktag, noisetag, savenoise, overwrite, idx):
+def make_mask(input_fits, threshold, boxsize, dilate, invert, trim, regionmask, opdir, masktag, noisetag, savenoise, overwrite, idx):
     """
     Create a mask for a single FITS image.
 
@@ -72,6 +72,10 @@ def make_mask(input_fits, threshold, boxsize, dilate, invert, opdir, masktag, no
     if dilate > 0:
         logging.info(f'[{log_prefix}_{idx}] Dilating islands with {dilate} iterations along spatial axes')
         mask_image = binary_dilation(mask_image, iterations=dilate)
+    if trim > 0:
+        logging.info(f'[{log_prefix}_{idx}] Trimming boundaries with {trim} iterations')
+        mask_image = binary_erosion(mask_image, iterations = trim)
+        noise_image = binary_erosion(noise_image, iterations = trim)
     logging.info(f'[{log_prefix}_{idx}] Writing mask image {mask_fits}')
     shutil.copyfile(input_fits, mask_fits)
     flush_image(mask_image, mask_fits)
@@ -82,7 +86,7 @@ def make_mask(input_fits, threshold, boxsize, dilate, invert, opdir, masktag, no
         flush_image(noise_image, noise_fits)
 
 
-def make_averaged_mask(input_fits_subset, threshold, boxsize, dilate, invert, opdir, masktag, noisetag, savenoise, averagetag, saveaverage, overwrite, idx):
+def make_averaged_mask(input_fits_subset, threshold, boxsize, dilate, invert, trim, regionmask, opdir, masktag, noisetag, savenoise, averagetag, saveaverage, overwrite, idx):
     """
     Create a mask for a sequence of averaged FITS images.
 
@@ -121,6 +125,10 @@ def make_averaged_mask(input_fits_subset, threshold, boxsize, dilate, invert, op
     mask_image, noise_image = get_mask_and_noise(mean_image, threshold, boxsize, dilate)
     if dilate > 0:
         mask_image = binary_dilation(mask_image, iterations=dilate)
+    if trim > 0:
+        logging.info(f'[{log_prefix}_{idx}] Trimming boundaries with {trim} iterations')
+        mask_image = binary_erosion(mask_image, iterations = trim)
+        noise_image = binary_erosion(noise_image, iterations = trim)
     logging.info(f'[{log_prefix}_{idx}] Writing mask image {mask_fits}')
     shutil.copyfile(input_fits, mask_fits)
     flush_image(mask_image, mask_fits)
@@ -193,15 +201,6 @@ def filter_mask(mask_subset, minchans, specdilate, masktag, filtertag, overwrite
     # Remove small islands in a vectorized manner
         cube[mask] = False
 
-    # Deprecated dilation method coupled to single channel rejection
-    # logging.info(f'[{log_prefix}_{idx}] Filtering image')
-    # for i in range(cube.shape[0]):
-    #     cut = binary_fill_holes(cube[i, :, :])
-    #     eroded = binary_erosion(cut)
-    #     dilated = binary_dilation(eroded, structure=recon_struct, iterations=specdilate)
-    #     cube[i, :, :] = dilated
-
-
     # Dilate along spectral axis
     if specdilate != 0:
         logging.info(f'[{log_prefix}_{idx}] Dilating islands with {specdilate} iterations along spectral axis')
@@ -217,9 +216,6 @@ def filter_mask(mask_subset, minchans, specdilate, masktag, filtertag, overwrite
             logging.info(f'[{log_prefix}_{idx}] Writing {filtered_fits}')
             shutil.copyfile(template_fits[i], filtered_fits)
             flush_image(cube[:, :, i + 1], filtered_fits)
-
-    
-  
 
 
 def count_islands(input_fits, orig_fits, idx):

@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='pony3d',
-    version='0.1.0',
+    version='0.2.0',
     author='Ian Heywood',
     author_email='ian.heywood@physics.ox.ac.uk',
     description='Parallelised 3D mask making for spectral line deconvolution',

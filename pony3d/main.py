@@ -151,7 +151,7 @@ def main():
 
     # Filter masks
     if minchans != 0 and specdilate != 0:
-        mask_list = natural_sort(glob.glob(f'{opdir}/{masktag}/*{pattern}*'))
+        mask_list = natural_sort(glob.glob(f'{opdir}/{masktag}/*{input_pattern}*'))
         if not mask_list:
             logger.error('No mask images found')
             sys.exit()
@@ -169,10 +169,10 @@ def main():
 
     # Count islands
     if minchans != 0 or specdilate != 0:
-        mask_list = natural_sort(glob.glob(f'{opdir}/{filtertag}/*{pattern}*'))
+        mask_list = natural_sort(glob.glob(f'{opdir}/{filtertag}/*{input_pattern}*'))
         orig_list = [mask_fits.split('/')[-1].replace(f'.{filtertag}', '') for mask_fits in mask_list]
     else:
-        mask_list = natural_sort(glob.glob(f'{opdir}/{masktag}/*{pattern}*'))
+        mask_list = natural_sort(glob.glob(f'{opdir}/{masktag}/*{input_pattern}*'))
         orig_list = [mask_fits.split('/')[-1].replace(f'.{masktag}', '') for mask_fits in mask_list]
 
     iterable_params = zip(mask_list, orig_list, np.arange(len(mask_list)))

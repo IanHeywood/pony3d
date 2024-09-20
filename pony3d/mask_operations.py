@@ -36,7 +36,7 @@ def get_mask_and_noise(input_image, threshold, boxsize, trim):
     noise_image[noise_image < median_noise] = median_noise
     mask_image = input_image > threshold * noise_image
     if trim > 0:
-        trim_mask = ~numpy.isnan(input_image)
+        trim_mask = ~np.isnan(input_image)
         trim_mask = binary_erosion(trim_mask,iterations = trim)
         mask_image[~trim_mask] = 0.0
         noise_image[~trim_mask] = 0.0

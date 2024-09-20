@@ -1,3 +1,7 @@
+#!/usr/bin/env python
+# ian.heywood@physics.ox.ac.uk
+
+
 import os
 import sys
 import glob
@@ -15,20 +19,21 @@ def main():
     logger = initialize_logging()
 
     # Print welcome message
+    spacer()
     hello()
     spacer()
 
     # Argument parsing
-    parser = OptionParser(usage='%prog [options] input_image(s)')
+    parser = OptionParser(usage='%prog [options] input_pattern')
     # Add all the options here...
     parser.add_option('--threshold', dest='threshold', metavar='T', help='Sigma threshold for masking (default = 5.0)', default=5.0)
     parser.add_option('--boxsize', dest='boxsize', metavar='B', help='Box size to use for background noise estimation (default = 80)', default=80)
     parser.add_option('--dilate', dest='dilate', metavar='D', help='Number of iterations of binary dilation in the spatial dimensions (default = 5, set to 0 to disable)', default=3)
     parser.add_option('--specdilate', dest='specdilate', metavar='S', help='Number of iterations of binary dilation in the spectral dimension (default = 2, set to 0 to disable, filtering must be enabled)', default=2)
-    parser.add_option('--chanaverage', dest='chanaverage', metavar='N', help='Width sliding channel window to use when making masks (odd numbers preferred, default = 1, i.e. no averaging)', default=1)
+    parser.add_option('--chanaverage', dest='chanaverage', metavar='N', help='Width of boxcar window to use when making masks (odd numbers preferred, default = 1, i.e. no averaging)', default=1)
     parser.add_option('--saveaverage', dest='saveaverage', help='Save the result of the sliding average (default = do not save averaged image)', action='store_true', default=False)
-    parser.add_option('--chanchunk', dest='chanchunk', metavar='M', help='Number of channels to load per worker when filtering single channel instances (default = 16)', default=16)
-    parser.add_option('--nofilter', dest='nofilter', help='Do not filter detections for single channel instances (default = filtering enabled)', action='store_true', default=False)
+    parser.add_option('--chanchunk', dest='chanchunk', metavar='M', help='Number of channels to load per worker when filtering instances (default = 16)', default=16)
+    parser.add_option('--minchans', dest='minchans', help='Minimum number of contiguous channels that an island must have to not be rejected (default = 4)', default=3)
     parser.add_option('--nocount', dest='nocount', help='Do not report island counts and input RMS in the log (default = report values)', action='store_true', default=False)
     parser.add_option('--savenoise', dest='savenoise', help='Enable to export noise images as FITS files (default = do not save noise images)', action='store_true', default=False)
     parser.add_option('--invert', dest='invert', help='Multiply images by -1 prior to masking (default = do not invert images)', action='store_true', default=False)
@@ -50,7 +55,7 @@ def main():
     chanaverage = int(options.chanaverage)
     saveaverage = options.saveaverage
     chanchunk = int(options.chanchunk)
-    nofilter = options.nofilter
+    minchans = options.minchans
     nocount = options.nocount
     savenoise = options.savenoise
     invert = options.invert
@@ -65,7 +70,7 @@ def main():
     pool = Pool(processes=j)
 
     # Create directories
-    create_directories(opdir, masktag, noisetag, averagetag, filtertag, savenoise, saveaverage, nofilter)
+    create_directories(opdir, masktag, noisetag, averagetag, filtertag, savenoise, saveaverage, minchans)
 
     # Get input FITS list
     if len(args) != 1:
@@ -79,25 +84,25 @@ def main():
             sys.exit()
         else:
             nfits = len(fits_list)
-            logger.info(f'Number of input images: {nfits}')
+            logger.info(f'Number of input images ......... : {nfits}')
 
     # Report options for log
-    logger.info(f'Number of worker processes: {j}')
-    logger.info(f'Output folder: {opdir}')
-    logger.info(f'Detection threshold: {threshold}')
-    logger.info(f'Boxsize: {boxsize}')
+    logger.info(f'Number of worker processes ..... : {j}')
+    logger.info(f'Output folder .................. : {opdir}')
+    logger.info(f'Detection threshold ............ : {threshold}')
+    logger.info(f'Boxsize ........................ : {boxsize}')
     if dilate > 0:
-        logger.info(f'Spatial dilation iteration(s): {dilate}')
-    logger.info(f'Frequency averaging: {"No" if chanaverage == 1 else "Yes"}')
+        logger.info(f'Spatial dilation iteration ..... : {dilate}')
+        logger.info(f'Frequency averaging ............ : {"No" if chanaverage == 1 else "Yes"}')
     if chanaverage != 1:
-        logger.info(f'Average channels per worker: {chanaverage}')
-        logger.info(f'Sacrificial edge channels: {chanaverage // 2}')
-    logger.info(f'Single channel filtering: {"No" if nofilter else "Yes"}')
-    if not nofilter:
-        logger.info(f'Spectral dilation iteration(s): {specdilate}')
-        logger.info(f'Filter channels per worker: {chanchunk}')
-    logger.info(f'Save noise maps: {"Yes" if savenoise else "No"}')
-    logger.info(f'Overwrite existing files: {"Yes" if overwrite else "No"}')
+        logger.info(f'Average channels per worker .... : {chanaverage}')
+        logger.info(f'Sacrificial edge channels ...... : {chanaverage // 2}')
+        logger.info(f'Minimum number of channels ..... : {minchans}')
+        logger.info(f'Spectral dilation iteration .... : {specdilate}')
+    if minchans != 0 and specdilate != 0:
+        logger.info(f'Filter channels per worker ..... : {chanchunk}')
+        logger.info(f'Save noise maps ................ : {"Yes" if savenoise else "No"}')
+        logger.info(f'Overwrite existing files ....... : {"Yes" if overwrite else "No"}')
 
     # Make masks
     if chanaverage == 1:
@@ -123,7 +128,7 @@ def main():
         pool.starmap(make_averaged_mask, iterable_params)
 
     # Filter masks
-    if not nofilter:
+    if minchans != 0 and specdilate != 0:
         mask_list = natural_sort(glob.glob(f'{opdir}/{masktag}/*{pattern}*'))
         if not mask_list:
             logger.error('No mask images found')
@@ -134,14 +139,14 @@ def main():
         logger.info(f'Filtering masks in {len(mask_subsets)} subsets')
 
         iterable_params = zip(
-            mask_subsets, [specdilate]*len(mask_subsets), [masktag]*len(mask_subsets), 
+            mask_subsets, [specdilate]*len(mask_subsets), [minchans]*len(mask_subsets), [masktag]*len(mask_subsets), 
             [filtertag]*len(mask_subsets), [overwrite]*len(mask_subsets), np.arange(len(mask_subsets))
         )
         pool.starmap(filter_mask, iterable_params)
 
     # Count islands
     if not nocount:
-        if not nofilter:
+        if minchans != 0:
             mask_list = natural_sort(glob.glob(f'{opdir}/{filtertag}/*{pattern}*'))
             orig_list = [mask_fits.split('/')[-1].replace(f'.{filtertag}', '') for mask_fits in mask_list]
         else:

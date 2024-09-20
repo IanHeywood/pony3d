@@ -34,7 +34,7 @@ def main():
 
     preproc_group = parser.add_argument_group('image pre-processing arguments')
     preproc_group.add_argument('--trim', type=int, default=0, metavar='', help='Trim this number of pixels from any NaN boundaries to avoid noisy edges (default = 0)')
-    preproc_group.add_argument('--regionmask', type=int, default=3, metavar='', help='Provide a region file that defines areas to exclude from the subsequent processing')
+    preproc_group.add_argument('--regionmask', type=int, default=3, metavar='', help='Provide a region file that defines areas to exclude from the subsequent processing [NOT YET IMPLEMENTED]')
 
     proc_group = parser.add_argument_group('processing arguments')
     proc_group.add_argument('--invert', action='store_true', help='Multiply images by -1 prior to masking (default = do not invert images)')
@@ -95,19 +95,13 @@ def main():
     create_directories(opdir, masktag, noisetag, averagetag, filtertag, savenoise, saveaverage, minchans)
 
 
-    # Get input FITS list
-    if len(args) != 1:
-        logger.error('Please specify an image pattern')
+    fits_list = natural_sort(glob.glob(f'*{input_pattern}*'))
+    if not fits_list:
+        logger.error('The specified pattern returns no files')
         sys.exit()
     else:
-        pattern = args[0]
-        fits_list = natural_sort(glob.glob(f'*{pattern}*'))
-        if not fits_list:
-            logger.error('The specified pattern returns no files')
-            sys.exit()
-        else:
-            nfits = len(fits_list)
-            logger.info(f'Number of input images ......... : {nfits}')
+        nfits = len(fits_list)
+        logger.info(f'Number of input images ......... : {nfits}')
 
 
     # Report options for log
@@ -133,7 +127,7 @@ def main():
     if boxcar == 1:
         iterable_params = zip(
             fits_list, [threshold]*nfits, [boxsize]*nfits, [dilate]*nfits,
-            [trim]*ns, [regionmask]*ns, 
+            [trim]*nfits, [regionmask]*nfits, 
             [invert]*nfits, [opdir]*nfits, [masktag]*nfits, [noisetag]*nfits,
             [savenoise]*nfits, [overwrite]*nfits, np.arange(nfits)
         )

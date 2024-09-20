@@ -38,7 +38,7 @@ def get_mask_and_noise(input_image, threshold, boxsize):
     return mask_image, noise_image
 
 
-def make_mask(input_fits, threshold, boxsize, dilate, invert, trim, regionmask, opdir, masktag, noisetag, savenoise, overwrite, idx):
+def make_mask(input_fits, threshold, boxsize, dilate, trim, regionmask, invert, opdir, masktag, noisetag, savenoise, overwrite, idx):
     """
     Create a mask for a single FITS image.
 

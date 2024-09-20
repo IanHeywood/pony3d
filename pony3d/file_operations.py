@@ -4,7 +4,7 @@ import glob
 import numpy as np
 from astropy.io import fits
 
-def create_directories(opdir, masktag, noisetag, averagetag, filtertag, savenoise, saveaverage, nofilter):
+def create_directories(opdir, masktag, noisetag, averagetag, filtertag, savenoise, saveaverage, minchans):
     """
     Create necessary directories for output files.
 
@@ -26,7 +26,7 @@ def create_directories(opdir, masktag, noisetag, averagetag, filtertag, savenois
         os.mkdir(f'{opdir}/{noisetag}')
     if saveaverage and not os.path.isdir(f'{opdir}/{averagetag}'):
         os.mkdir(f'{opdir}/{averagetag}')
-    if not nofilter and not os.path.isdir(f'{opdir}/{filtertag}'):
+    if not os.path.isdir(f'{opdir}/{filtertag}'):
         os.mkdir(f'{opdir}/{filtertag}')
 
 def get_image(fits_file):

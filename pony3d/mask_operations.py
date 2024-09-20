@@ -171,15 +171,24 @@ def filter_mask(mask_subset, minchans, specdilate, masktag, filtertag, overwrite
     cube = cube.astype(bool)
 
     # Remove islands smaller than minchans along spectral axis
-    if minchans != 0:
+    if minchans > 0:
         logging.info(f'[{log_prefix}_{idx}] Removing islands with fewer than {minchans} contiguous channels')
         labeled_cube, n_islands = label(cube)
-        for island in range(1, n_islands + 1):
-            island_indices = np.where(labeled_cube == island)[2]
-            # Check the size of the region along the specified axis
-            if len(island_indices) <= minchans:
-            # Remove the region by setting elements to False
-               cube[labeled_cube == island] = False 
+        island_sizes = np.zeros(n_islands + 1, dtype=int)
+        flat_indices = np.where(labeled_cube > 0)
+        flat_labels = labeled_cube[flat_indices]
+
+        # Calculate unique count of elements along the specified axis for each label
+        unique_counts = np.zeros_like(island_sizes)
+        # Get unique labels and counts along the specified axis
+        unique, unique_counts[flat_labels] = np.unique(flat_labels * (cube.shape[2] + 1) + flat_indices[2], return_counts=True)
+
+        # Identify small islands that need to be removed
+        small_islands = np.where(unique_counts < minchans)[0]
+
+        # Remove small islands in a vectorized manner
+        mask = np.isin(labeled_cube, small_islands)
+        cube[mask] = False
 
 
     # Deprecated dilation method coupled to single channel rejection

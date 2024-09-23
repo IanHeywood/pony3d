@@ -185,7 +185,7 @@ def main():
     pool.starmap(count_islands, iterable_params)
 
     t_count = round((time.time() - t_filter),1)
-    t_total = round((time.time() - t0,1)
+    t_total = round((time.time() - t0),1)
 
     spacer()
     logger.info(f'Mask making took {t_mask} seconds {(round(t_mask/nfits,1))} s/channel)')

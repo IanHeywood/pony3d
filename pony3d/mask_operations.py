@@ -40,7 +40,7 @@ def get_mask_and_noise(input_image, threshold, boxsize, trim):
     if trim > 0:
         struct_element = disk(trim)
         trim_mask = ~np.isnan(input_image)
-        trim_mask = binary_erosion(trim_mask, structure=structuring_element)
+        trim_mask = binary_erosion(trim_mask, structure=struct_element)
         mask_image[~trim_mask] = 0.0
         noise_image[~trim_mask] = numpy.nan
     return mask_image, noise_image

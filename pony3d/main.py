@@ -108,7 +108,7 @@ def main():
     logger.info(f'Detection threshold ................. : {threshold}')
     logger.info(f'Boxsize ............................. : {boxsize}')
     logger.info(f'Edge trimming ....................... : {"None" if trim == 0 else f"{trim}"}')
-    logger.info(f'Region mask ......................... : {"None" if regionmask == '' else f"{regionmask}"}')
+    logger.info(f'Region mask ......................... : {"None" if regionmask == "" else f"{regionmask}"}')
     logger.info(f'Invert input images ................. : {"Yes" if invert else "No"}')
     logger.info(f'Min channels per island ............. : {minchans}')
     logger.info(f'Spatial dilation iterations ......... : {dilate}')

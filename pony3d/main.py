@@ -26,7 +26,7 @@ def main():
     spacer()
 
 
-    parser = argparse.ArgumentParser(description='Parallelised production of deconvolution masks, and3D source finding')
+    parser = argparse.ArgumentParser(description='Parallelised production of deconvolution masks, and 3D source-finding')
 
     detection_group = parser.add_argument_group('detection arguments')
     detection_group.add_argument('--threshold', type=float, default=5.0, metavar='', help='Sigma threshold for masking (default = 5.0)')
@@ -34,10 +34,10 @@ def main():
 
     preproc_group = parser.add_argument_group('image pre-processing arguments')
     preproc_group.add_argument('--trim', type=int, default=0, metavar='', help='Trim this number of pixels from any NaN boundaries to avoid noisy edges (default = 0)')
-    preproc_group.add_argument('--regionmask', type=int, default=3, metavar='', help='Provide a region file that defines areas to exclude from the subsequent processing [NOT YET IMPLEMENTED]')
+    preproc_group.add_argument('--regionmask', default='', metavar='', help='Provide a region file that defines areas to exclude from the subsequent processing [NOT YET IMPLEMENTED]')
+    preproc_group.add_argument('--invert', action='store_true', help='Multiply images by -1 prior to masking (default = do not invert images)')
 
     proc_group = parser.add_argument_group('processing arguments')
-    proc_group.add_argument('--invert', action='store_true', help='Multiply images by -1 prior to masking (default = do not invert images)')
     proc_group.add_argument('--minchans', type=int, default=3, metavar='', help='Minimum number of contiguous channels that an island must have to be retained (must be less than chanchunk-2; default = 3)')
     proc_group.add_argument('--dilate', type=int, default=3, metavar='', help='Iterations of dilation in spatial dimensions (default = 3, set to 0 to disable)')
     proc_group.add_argument('--specdilate', type=int, default=3, metavar='', help='Iterations of dilation in the spectral dimension (default = 3, set to 0 to disable)')
@@ -64,10 +64,10 @@ def main():
     threshold = args.threshold
     boxsize = args.boxsize
 
-    trim = args.trim
+    trim = abs(args.trim)
     regionmask = args.regionmask
-
     invert = args.invert
+
     minchans = args.minchans
     dilate = args.dilate
     specdilate = args.specdilate
@@ -101,26 +101,28 @@ def main():
         sys.exit()
     else:
         nfits = len(fits_list)
-        logger.info(f'Number of input images ......... : {nfits}')
+        logger.info(f'Number of input images .............. : {nfits}')
 
 
     # Report options for log
-    logger.info(f'Number of worker processes ..... : {j}')
-    logger.info(f'Output folder .................. : {opdir}')
-    logger.info(f'Detection threshold ............ : {threshold}')
-    logger.info(f'Boxsize ........................ : {boxsize}')
-    if dilate > 0:
-        logger.info(f'Spatial dilation iteration ..... : {dilate}')
-        logger.info(f'Frequency averaging ............ : {"No" if boxcar == 1 else "Yes"}')
+    logger.info(f'Detection threshold ................. : {threshold}')
+    logger.info(f'Boxsize ............................. : {boxsize}')
+    logger.info(f'Edge trimming ....................... : {"None" if trim == 0 else trim}')
+    logger.info(f'Region mask ......................... : {"None" if regionmask == '' else regionmask}')
+    logger.info(f'Invert input images ................. : {"Yes" if invert else "No"}')
+    logger.info(f'Min channels per island ............. : {minchans}')
+    logger.info(f'Spatial dilation iterations ......... : {dilate}')
+    logger.info(f'Spectral dilation iterations ........ : {specdilate}')
+    logger.info(f'Apply boxcar averaging .............. : {"Yes" if boxcar != else "No"}')
     if boxcar != 1:
-        logger.info(f'Average channels per worker .... : {boxcar}')
-        logger.info(f'Sacrificial edge channels ...... : {boxcar // 2}')
-    logger.info(f'Minimum number of channels ..... : {minchans}')
-    logger.info(f'Spectral dilation iteration .... : {specdilate}')
-    if minchans != 0 and specdilate != 0:
-        logger.info(f'Filter channels per worker ..... : {chanchunk}')
-        logger.info(f'Save noise maps ................ : {"Yes" if savenoise else "No"}')
-        logger.info(f'Overwrite existing files ....... : {"Yes" if overwrite else "No"}')
+        logger.info(f'Channels per boxcar worker .......... : {boxcar}')
+        logger.info(f'Sacrificial edge channels ........... : {boxcar // 2}')
+        logger.info(f'Save averaged maps .................. : {"Yes" if saveaverage else "No"}')
+    logger.info(f'Save noise maps ..................... : {"Yes" if savenoise else "No"}')
+    logger.info(f'Output folder ....................... : {opdir}')
+    logger.info(f'Overwrite existing files ............ : {"Yes" if overwrite else "No"}')
+    logger.info(f'Number of worker processes .......... : {j}')
+    logger.info(f'Channels per processing worker ...... : {chanchunk}')
 
 
     # Make masks

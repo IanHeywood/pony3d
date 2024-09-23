@@ -107,13 +107,13 @@ def main():
     # Report options for log
     logger.info(f'Detection threshold ................. : {threshold}')
     logger.info(f'Boxsize ............................. : {boxsize}')
-    logger.info(f'Edge trimming ....................... : {"None" if trim == 0 else {trim}}')
-    logger.info(f'Region mask ......................... : {"None" if regionmask == '' else {regionmask}}')
+    logger.info(f'Edge trimming ....................... : {"None" if trim == 0 else f"{trim}"}')
+    logger.info(f'Region mask ......................... : {"None" if regionmask == '' else f"{regionmask}"}')
     logger.info(f'Invert input images ................. : {"Yes" if invert else "No"}')
     logger.info(f'Min channels per island ............. : {minchans}')
     logger.info(f'Spatial dilation iterations ......... : {dilate}')
     logger.info(f'Spectral dilation iterations ........ : {specdilate}')
-    logger.info(f'Apply boxcar averaging .............. : {"Yes" if boxcar != else "No"}')
+    logger.info(f'Apply boxcar averaging .............. : {"Yes" if boxcar != 1 else "No"}')
     if boxcar != 1:
         logger.info(f'Channels per boxcar worker .......... : {boxcar}')
         logger.info(f'Sacrificial edge channels ........... : {boxcar // 2}')

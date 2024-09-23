@@ -30,7 +30,7 @@ def main():
 
     detection_group = parser.add_argument_group('detection arguments')
     detection_group.add_argument('--threshold', type=float, default=5.0, metavar='', help='Sigma threshold for masking (default = 5.0)')
-    detection_group.add_argument('--boxsize', type=int, default=80, metavar='', help='Box size for background noise estimation (default = 80)')
+    detection_group.add_argument('--boxsize', type=int, default=150, metavar='', help='Box size for background noise estimation (default = 150)')
 
     preproc_group = parser.add_argument_group('image pre-processing arguments')
     preproc_group.add_argument('--trim', type=int, default=0, metavar='', help='Trim this number of pixels from any NaN boundaries to avoid noisy edges (default = 0)')
@@ -187,10 +187,12 @@ def main():
     t_count = round((time.time() - t_filter),1)
     t_total = round((time.time() - t0,1)
 
+    spacer()
     logger.info(f'Mask making took {t_mask} seconds {(round(t_mask/nfits,1))} s/channel)')
     logger.info(f'Mask processing took {t_proc} seconds {(round(t_proc/nfits,1))} s/channel)')
     logger.info(f'Island counting took {t_count} seconds {(round(t_count/nfits,1))} s/channel)')
     logger.info(f'Total processing time was {t_count,} seconds {(round(t_total/nfits,1))} s/channel)')
+    spacer()
 
 if __name__ == '__main__':
 

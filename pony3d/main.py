@@ -171,7 +171,7 @@ def main():
         )
         pool.starmap(filter_mask, iterable_params)
 
-    t_filter = round((time.time() - t_mask),1)
+    t_filter = round((time.time() - t_proc),1)
 
     # Count islands
     if minchans != 0 or specdilate != 0:
@@ -191,7 +191,7 @@ def main():
     logger.info(f'Mask making took {t_proc} seconds {(round(t_proc/nfits,1))} s/channel)')
     logger.info(f'Mask processing took {t_filter }seconds {(round(t_filter/nfits,1))} s/channel)')
     logger.info(f'Island counting took {t_count} seconds {(round(t_count/nfits,1))} s/channel)')
-    logger.info(f'Total processing time was {t_count,} seconds {(round(t_total/nfits,1))} s/channel)')
+    logger.info(f'Total processing time was {t_count} seconds {(round(t_total/nfits,1))} s/channel)')
     spacer()
 
 if __name__ == '__main__':

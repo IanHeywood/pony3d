@@ -7,6 +7,7 @@ import numpy as np
 import os
 import scipy.special
 import shutil
+import time
 from scipy.ndimage import binary_dilation, binary_erosion, minimum_filter, label, binary_fill_holes
 from skimage.morphology import disk
 from pony3d.file_operations import get_image, flush_image, load_cube
@@ -38,11 +39,14 @@ def get_mask_and_noise(input_image, threshold, boxsize, trim):
     mask_image = input_image > threshold * noise_image
 
     if trim > 0:
+        t0 = time.time()
         struct_element = disk(trim)
         trim_mask = ~np.isnan(input_image)
         trim_mask = binary_erosion(trim_mask, structure=struct_element)
         mask_image[~trim_mask] = 0.0
-        noise_image[~trim_mask] = numpy.nan
+        noise_image[~trim_mask] = np.nan
+        elapsed = time.time() - t0
+        print(f'Trim operation took {round(elapsed,2)} seconds')
     return mask_image, noise_image
 
 

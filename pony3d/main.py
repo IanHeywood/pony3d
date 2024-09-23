@@ -101,29 +101,31 @@ def main():
         sys.exit()
     else:
         nfits = len(fits_list)
-        logger.info(f'Number of input images .............. : {nfits}')
+        logger.info(f'Number of input images ............... : {nfits}')
 
 
     # Report options for log
-    logger.info(f'Detection threshold ................. : {threshold}')
-    logger.info(f'Boxsize ............................. : {boxsize}')
-    logger.info(f'Edge trimming ....................... : {"None" if trim == 0 else f"{trim}"}')
-    logger.info(f'Region mask ......................... : {"None" if regionmask == "" else f"{regionmask}"}')
-    logger.info(f'Invert input images ................. : {"Yes" if invert else "No"}')
-    logger.info(f'Min channels per island ............. : {minchans}')
-    logger.info(f'Spatial dilation iterations ......... : {dilate}')
-    logger.info(f'Spectral dilation iterations ........ : {specdilate}')
-    logger.info(f'Apply boxcar averaging .............. : {"Yes" if boxcar != 1 else "No"}')
+    logger.info(f'Detection threshold .................. : {threshold}')
+    logger.info(f'Boxsize .............................. : {boxsize}')
+    logger.info(f'Edge trimming ........................ : {"None" if trim == 0 else f"{trim}"}')
+    logger.info(f'Region mask .......................... : {"None" if regionmask == "" else f"{regionmask}"}')
+    logger.info(f'Invert input images .................. : {"Yes" if invert else "No"}')
+    logger.info(f'Min channels per island .............. : {minchans}')
+    logger.info(f'Spatial dilation iterations .......... : {dilate}')
+    logger.info(f'Spectral dilation iterations ......... : {specdilate}')
+    logger.info(f'Apply boxcar averaging ............... : {"Yes" if boxcar != 1 else "No"}')
     if boxcar != 1:
-        logger.info(f'Channels per boxcar worker .......... : {boxcar}')
-        logger.info(f'Sacrificial edge channels ........... : {boxcar // 2}')
-        logger.info(f'Save averaged maps .................. : {"Yes" if saveaverage else "No"}')
-    logger.info(f'Save noise maps ..................... : {"Yes" if savenoise else "No"}')
-    logger.info(f'Output folder ....................... : {opdir}')
-    logger.info(f'Overwrite existing files ............ : {"Yes" if overwrite else "No"}')
-    logger.info(f'Number of worker processes .......... : {j}')
-    logger.info(f'Channels per processing worker ...... : {chanchunk}')
+        logger.info(f'Channels per boxcar worker ........... : {boxcar}')
+        logger.info(f'Sacrificial edge channels ............ : {boxcar // 2}')
+        logger.info(f'Save averaged maps ................... : {"Yes" if saveaverage else "No"}')
+    logger.info(f'Save noise maps ...................... : {"Yes" if savenoise else "No"}')
+    logger.info(f'Output folder ........................ : {opdir}')
+    logger.info(f'Overwrite existing files ............. : {"Yes" if overwrite else "No"}')
+    logger.info(f'Number of worker processes ........... : {j}')
+    logger.info(f'Channels per processing worker ....... : {chanchunk}')
+    spacer()
 
+    t0 = time.time()
 
     # Make masks
     if boxcar == 1:
@@ -150,6 +152,7 @@ def main():
         )
         pool.starmap(make_averaged_mask, iterable_params)
 
+    t_proc = round((time.time() - t0),1)
 
     # Filter masks
     if minchans != 0 and specdilate != 0:
@@ -168,6 +171,7 @@ def main():
         )
         pool.starmap(filter_mask, iterable_params)
 
+    t_filter = round((time.time() - t_mask),1)
 
     # Count islands
     if minchans != 0 or specdilate != 0:
@@ -180,6 +184,13 @@ def main():
     iterable_params = zip(mask_list, orig_list, np.arange(len(mask_list)))
     pool.starmap(count_islands, iterable_params)
 
+    t_count = round((time.time() - t_filter),1)
+    t_total = round((time.time() - t0,1)
+
+    logger.info(f'Mask making took {t_mask} seconds {(round(t_mask/nfits,1))} s/channel)')
+    logger.info(f'Mask processing took {t_proc} seconds {(round(t_proc/nfits,1))} s/channel)')
+    logger.info(f'Island counting took {t_count} seconds {(round(t_count/nfits,1))} s/channel)')
+    logger.info(f'Total processing time was {t_count,} seconds {(round(t_total/nfits,1))} s/channel)')
 
 if __name__ == '__main__':
 

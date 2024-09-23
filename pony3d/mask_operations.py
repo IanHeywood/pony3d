@@ -8,6 +8,7 @@ import os
 import scipy.special
 import shutil
 from scipy.ndimage import binary_dilation, binary_erosion, minimum_filter, label, binary_fill_holes
+from skimage.morphology import disk
 from pony3d.file_operations import get_image, flush_image, load_cube
 
 
@@ -35,11 +36,13 @@ def get_mask_and_noise(input_image, threshold, boxsize, trim):
     median_noise = np.median(noise_image)
     noise_image[noise_image < median_noise] = median_noise
     mask_image = input_image > threshold * noise_image
+
     if trim > 0:
+        struct_element = disk(trim)
         trim_mask = ~np.isnan(input_image)
-        trim_mask = binary_erosion(trim_mask,iterations = trim)
+        trim_mask = binary_erosion(trim_mask, structure=structuring_element)
         mask_image[~trim_mask] = 0.0
-        noise_image[~trim_mask] = 0.0
+        noise_image[~trim_mask] = numpy.nan
     return mask_image, noise_image
 
 

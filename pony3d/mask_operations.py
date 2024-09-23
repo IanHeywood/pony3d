@@ -38,24 +38,35 @@ def get_mask_and_noise(input_image, threshold, boxsize, trim):
     noise_image[noise_image < median_noise] = median_noise
     mask_image = input_image > threshold * noise_image
 
+    # Erosion iterations method 
     if trim > 0:
         t0 = time.time()
-        border_mask = ~np.isnan(input_image)
-        kernel_size = 2 * trim + 1
-        kernel = np.ones((kernel_size, kernel_size), dtype=int)
-        convolved_mask = convolve(border_mask.astype(int), kernel)
-        trim_mask = convolved_mask >= np.sum(kernel)
+        trim_mask = ~np.isnan(input_image)
+        trim_mask = binary_erosion(trim_mask, iterations = trim)
         mask_image[~trim_mask] = 0.0
         noise_image[~trim_mask] = np.nan
         elapsed = time.time() - t0
         print(f'Trim operation took {round(elapsed,2)} seconds')
 
-    # Erosion method (takes too long)
+    # Big structure erosion method (too slow)
     # if trim > 0:
     #     t0 = time.time()
     #     struct_element = disk(trim)
     #     trim_mask = ~np.isnan(input_image)
     #     trim_mask = binary_erosion(trim_mask, structure=struct_element)
+    #     mask_image[~trim_mask] = 0.0
+    #     noise_image[~trim_mask] = np.nan
+    #     elapsed = time.time() - t0
+    #     print(f'Trim operation took {round(elapsed,2)} seconds')
+
+    # Convolution method (even slower)
+    # if trim > 0:
+    #     t0 = time.time()
+    #     border_mask = ~np.isnan(input_image)
+    #     kernel_size = 2 * trim + 1
+    #     kernel = np.ones((kernel_size, kernel_size), dtype=int)
+    #     convolved_mask = convolve(border_mask.astype(int), kernel)
+    #     trim_mask = convolved_mask >= np.sum(kernel)
     #     mask_image[~trim_mask] = 0.0
     #     noise_image[~trim_mask] = np.nan
     #     elapsed = time.time() - t0

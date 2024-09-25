@@ -195,11 +195,6 @@ def main():
     t_total = round((time.time() - t0),1)
 
     spacer()
-    
-    logger.info(f'Mask making took {t_proc} seconds ({(round(t_proc/nfits,1))} s/channel)')
-    logger.info(f'Mask processing took {t_filter} seconds ({(round(t_filter/nfits,1))} s/channel)')
-    logger.info(f'Island counting took {t_count} seconds ({(round(t_count/nfits,1))} s/channel)')
-    logger.info(f'Total processing time was {t_total} seconds ({(round(t_total/nfits,1))} s/channel)')
 
     logger.info(f'Mask making .......................... : {t_proc} seconds ({(round(t_proc/nfits,1))} s/channel)')
     logger.info(f'Mask processing ...................... : {t_filter} seconds ({(round(t_filter/nfits,1))} s/channel)')

@@ -1,8 +1,13 @@
+#!/usr/bin/env python
+# ian.heywood@physics.ox.ac.uk
+
+
 import os
 import re
 import glob
 import numpy as np
 from astropy.io import fits
+
 
 def create_directories(opdir, masktag, noisetag, averagetag, filtertag, savenoise, saveaverage, minchans):
     """
@@ -29,6 +34,7 @@ def create_directories(opdir, masktag, noisetag, averagetag, filtertag, savenois
     if not os.path.isdir(f'{opdir}/{filtertag}'):
         os.mkdir(f'{opdir}/{filtertag}')
 
+
 def get_image(fits_file):
     """
     Extract the 2D image data from a FITS file.
@@ -37,33 +43,29 @@ def get_image(fits_file):
     fits_file (str): Path to the FITS file.
 
     Returns:
-    np.array: 2D image data.
+    np.array: 2D image data
+    image header
     """
-    input_hdu = fits.open(fits_file, ignore_missing_simple=True)[0]
-    if len(input_hdu.data.shape) == 2:
-        return np.array(input_hdu.data[:, :])
-    elif len(input_hdu.data.shape) == 3:
-        return np.array(input_hdu.data[0, :, :])
-    else:
-        return np.array(input_hdu.data[0, 0, :, :])
+    with fits.open(fits_file) as hdul:
+        image_data = hdul[0].data
+        if len(image_data.shape) == 2: image_data = image_data[:,:]
+        elif len(image_data.shape) == 3: image_data = image_data[0,:,:]
+        else: image_data = image_data[0,0,:,:]
+        header = hdul[0].header
+    return image_data,header
 
-def flush_image(image_data, fits_file):
+
+def flush_image(image_data, header, fits_file):
     """
     Write the 2D image data array to a FITS file.
 
     Args:
-    image_data (np.array): 2D array of image data.
     fits_file (str): Path to the FITS file to write to.
+    image_data (np.array): 2D array of image data.
+    header: FITS file header (generally copied from the corresponding input image)
     """
-    with fits.open(fits_file, mode='update') as f:
-        input_hdu = f[0]
-        if len(input_hdu.data.shape) == 2:
-            input_hdu.data[:, :] = image_data
-        elif len(input_hdu.data.shape) == 3:
-            input_hdu.data[0, :, :] = image_data
-        elif len(input_hdu.data.shape) == 4:
-            input_hdu.data[0, 0, :, :] = image_data
-        f.flush()
+    fits.writeto(fits_file, image_data.astype(float), header, overwrite=True)
+
 
 def load_cube(fits_list):
     """
@@ -75,8 +77,9 @@ def load_cube(fits_list):
     Returns:
     np.array: 3D cube of image data.
     """
-    temp = [get_image(fits_file) for fits_file in fits_list]
+    temp = [get_image(fits_file)[0] for fits_file in fits_list]
     return np.dstack(temp)
+
 
 def natural_sort(l):
     """

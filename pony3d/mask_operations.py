@@ -6,10 +6,8 @@ import logging
 import numpy as np
 import os
 import scipy.special
-import shutil
 import time
 from scipy.ndimage import binary_dilation, binary_erosion, convolve, minimum_filter, label, binary_fill_holes
-#from skimage.morphology import disk
 from pony3d.file_operations import get_image, flush_image, load_cube
 
 
@@ -40,13 +38,10 @@ def get_mask_and_noise(input_image, threshold, boxsize, trim):
 
     # Erosion iterations method 
     if trim > 0:
-        t0 = time.time()
         trim_mask = ~np.isnan(input_image)
         trim_mask = binary_erosion(trim_mask, iterations = trim)
         mask_image[~trim_mask] = 0.0
         noise_image[~trim_mask] = np.nan
-        elapsed = time.time() - t0
-        print(f'Trim operation took {round(elapsed,2)} seconds')
 
     # Big structure erosion method (too slow)
     # if trim > 0:
@@ -100,7 +95,7 @@ def make_mask(input_fits, threshold, boxsize, dilate, trim, regionmask, invert, 
         return
 
     logging.info(f'[{log_prefix}_{idx}] Reading {input_fits}')
-    input_image = get_image(input_fits)
+    input_image,header = get_image(input_fits)
  
     if invert:
         logging.info(f'[{log_prefix}_{idx}] Inverting {input_fits}')
@@ -113,13 +108,11 @@ def make_mask(input_fits, threshold, boxsize, dilate, trim, regionmask, invert, 
         mask_image = binary_dilation(mask_image, iterations=dilate)
     
     logging.info(f'[{log_prefix}_{idx}] Writing mask image {mask_fits}')
-    shutil.copyfile(input_fits, mask_fits)
-    flush_image(mask_image, mask_fits)
+    flush_image(mask_image, header, mask_fits)
     if savenoise:
         noise_fits = os.path.join(opdir, noisetag, input_fits.replace('.fits', f'.{noisetag}.fits'))
-        shutil.copyfile(input_fits, noise_fits)
         logging.info(f'[{log_prefix}_{idx}] Writing noise image {noise_fits}')
-        flush_image(noise_image, noise_fits)
+        flush_image(noise_image, header, noise_fits)
 
 
 def make_averaged_mask(input_fits_subset, threshold, boxsize, dilate, invert, trim, regionmask, opdir, masktag, noisetag, savenoise, averagetag, saveaverage, overwrite, idx):
@@ -162,23 +155,21 @@ def make_averaged_mask(input_fits_subset, threshold, boxsize, dilate, invert, tr
     if dilate > 0:
         mask_image = binary_dilation(mask_image, iterations=dilate)
     logging.info(f'[{log_prefix}_{idx}] Writing mask image {mask_fits}')
-    shutil.copyfile(input_fits, mask_fits)
-    flush_image(mask_image, mask_fits)
+    input_image, header = get_image(input_fits)
+    flush_image(mask_image, header, mask_fits)
     if saveaverage:
         mean_fits = os.path.join(opdir, averagetag, input_fits.replace('.fits', f'.{averagetag}.fits'))
         logging.info(f'[{log_prefix}_{idx}] Writing averaged mask image {mean_fits}')
-        shutil.copyfile(input_fits, mean_fits)
-        flush_image(mean_image, mean_fits)
+        flush_image(mean_image, header, mean_fits)
     if savenoise:
         noise_fits = os.path.join(opdir, noisetag, input_fits.replace('.fits', f'.{noisetag}.fits'))
-        shutil.copyfile(input_fits, noise_fits)
         logging.info(f'[{log_prefix}_{idx}] Writing noise image {noise_fits}')
-        flush_image(noise_image, noise_fits)
+        flush_image(noise_image, header, noise_fits)
 
 
 def filter_mask(mask_subset, minchans, specdilate, masktag, filtertag, overwrite, idx):
     """
-    Filter mask images for single channel islands.
+    Filter mask images for islands spanning fewer than minchans along the spectral axis.
 
     Args:
     mask_subset (list): List of mask files.
@@ -246,8 +237,8 @@ def filter_mask(mask_subset, minchans, specdilate, masktag, filtertag, overwrite
             logging.info(f'[{log_prefix}_{idx}] Skipping {filtered_fits} (overwrite disabled)')
         else:
             logging.info(f'[{log_prefix}_{idx}] Writing {filtered_fits}')
-            shutil.copyfile(template_fits[i], filtered_fits)
-            flush_image(cube[:, :, i + 1], filtered_fits)
+            template_image, header = get_image(template_fits[i])
+            flush_image(cube[:, :, i + 1], header, filtered_fits)
 
 
 def count_islands(input_fits, orig_fits, idx):
@@ -261,10 +252,10 @@ def count_islands(input_fits, orig_fits, idx):
     """
     log_prefix = 'Counting'
     idx = str(idx).zfill(5)
-    input_image = get_image(input_fits)
+    input_image,header = get_image(input_fits)
     input_image = input_image.byteswap().view(input_image.dtype.newbyteorder())
 #   input_image = input_image.byteswap().newbyteorder()  
     labeled_mask_image, n_islands = label(input_image)
-    orig_image = get_image(orig_fits)
+    orig_image,orig_header = get_image(orig_fits)
     rms = np.nanstd(orig_image)
     logging.info(f'[{log_prefix}_{idx}] Clean parameters: {input_fits} {n_islands} {rms}')

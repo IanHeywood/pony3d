@@ -45,16 +45,18 @@ def main():
 
     output_group = parser.add_argument_group('output arguments')
     output_group.add_argument('--saveaverage', action='store_true', help='Save the boxcar-averaged images (default = do not save)')
-    output_group.add_argument('--savenoise', action='store_true', help='Enable to export noise images as FITS files (default = do not save noise images)')
+    output_group.add_argument('--savenoise', action='store_true', help='Enable to export noise images as FITS files (default = do not save)')
     output_group.add_argument('--opdir', default='', metavar='', help='Name of folder for output products (default = auto generated)')
     output_group.add_argument('--masktag', default='mask', metavar='', help='Suffix and subfolder name for mask images (default = mask)')
     output_group.add_argument('--noisetag', default='noise', metavar='', help='Suffix and subfolder name for noise images (default = noise)')
-    output_group.add_argument('--averagetag', default='avg', metavar='', help='Suffix and subfolder name for boxcar averaged images (default = avg)')
+    output_group.add_argument('--averagetag', default='boxavg', metavar='', help='Suffix and subfolder name for boxcar averaged images (default = boxavg)')
     output_group.add_argument('--filtertag', default='filtered', metavar='', help='Suffix and subfolder name for filtered images (default = filtered)')
+    output_group.add_argument('--labeltag', default='labeled', metavar='', help='Suffix and subfolder name for labeled images (default = labeled)')
     output_group.add_argument('--force', dest='overwrite', action='store_true', help='Overwrite existing FITS outputs (default = do not overwrite)')
 
     parallel_group = parser.add_argument_group('parallelism arguments')
-    parallel_group.add_argument('-j', type=int, default=24, metavar='', help='Number of worker processes (default = 24)')
+    parallel_group.add_argument('--j', '-j', type=int, default=24, metavar='', help='Number of worker processes (default = 24)')
+    parallel_group.add_argument('--maxwrites', type=int, default = 4, metavar = '', help = 'Maximum number of concurrent processes that can write to disk (default = 4)')
     parallel_group.add_argument('--chanchunk', type=int, default=16, metavar='', help='Number of channels to load per worker when processing islands (default = 16)')
 
     parser.add_argument('input_pattern', help='Pattern for the sequence of FITS files to process')
@@ -80,16 +82,17 @@ def main():
     noisetag = args.noisetag
     averagetag = args.averagetag
     filtertag = args.filtertag
+    labeltag = args.labeltag
     overwrite = args.overwrite
     j = args.j
+    maxwrites = args.maxwrites
     chanchunk = args.chanchunk
 
     # Input pattern for FITS files
     input_pattern = args.input_pattern
 
-
     pool = Pool(processes=j)
-
+#    semaphore = multiprocessing.Semaphore(maxwrites)
 
     # Create directories
     create_directories(opdir, masktag, noisetag, averagetag, filtertag, savenoise, saveaverage, minchans)
@@ -102,12 +105,13 @@ def main():
     else:
         nfits = len(fits_list)
         logger.info(f'Number of input images ............... : {nfits}')
+        if j > nfits: j = nfits
 
 
     # Report options for log
     logger.info(f'Detection threshold .................. : {threshold}')
     logger.info(f'Boxsize .............................. : {boxsize}')
-    logger.info(f'Edge trimming ........................ : {"None" if trim == 0 else f"{trim}"}')
+    logger.info(f'Edge trimming iterations ............. : {"None" if trim == 0 else f"{trim}"}')
     logger.info(f'Region mask .......................... : {"None" if regionmask == "" else f"{regionmask}"}')
     logger.info(f'Invert input images .................. : {"Yes" if invert else "No"}')
     logger.info(f'Min channels per island .............. : {minchans}')
@@ -117,11 +121,12 @@ def main():
     if boxcar != 1:
         logger.info(f'Channels per boxcar worker ........... : {boxcar}')
         logger.info(f'Sacrificial edge channels ............ : {boxcar // 2}')
-        logger.info(f'Save averaged maps ................... : {"Yes" if saveaverage else "No"}')
-    logger.info(f'Save noise maps ...................... : {"Yes" if savenoise else "No"}')
+        logger.info(f'Save boxcar averaged images .......... : {"Yes" if saveaverage else "No"}')
+    logger.info(f'Save noise images .................... : {"Yes" if savenoise else "No"}')
     logger.info(f'Output folder ........................ : {opdir}')
     logger.info(f'Overwrite existing files ............. : {"Yes" if overwrite else "No"}')
     logger.info(f'Number of worker processes ........... : {j}')
+    logger.info(f'Maximum number of concurrent writes .. : {maxwrites}')
     logger.info(f'Channels per processing worker ....... : {chanchunk}')
     spacer()
 
@@ -155,13 +160,13 @@ def main():
     t_proc = time.time()
 
     # Filter masks
-    if minchans != 0 and specdilate != 0:
+    if minchans != 0 or specdilate != 0:
         mask_list = natural_sort(glob.glob(f'{opdir}/{masktag}/*{input_pattern}*'))
         if not mask_list:
             logger.error('No mask images found')
             sys.exit()
         nchunks = nfits // chanchunk
-        mask_subsets = [mask_list[i*chanchunk:(i+1)*chanchunk+2] for i in range(nchunks)]
+        mask_subsets = [mask_list[i*chanchunk:(i+1)*chanchunk+2] for i in range(nchunks-1)] # CHECK THIS
         mask_subsets.append(mask_list[(nchunks-1)*chanchunk:])
         logger.info(f'Filtering masks in {len(mask_subsets)} subsets')
 
@@ -184,16 +189,23 @@ def main():
     iterable_params = zip(mask_list, orig_list, np.arange(len(mask_list)))
     pool.starmap(count_islands, iterable_params)
 
-    t_count = round((t_count - t_filter),1)
+    t_count = round((time.time() - t_filter),1)
     t_filter = round((t_filter - t_proc),1)
     t_proc = round((t_proc - t0),1)
     t_total = round((time.time() - t0),1)
 
     spacer()
-    logger.info(f'Mask making took {t_proc} seconds {(round(t_proc/nfits,1))} s/channel)')
-    logger.info(f'Mask processing took {t_filter} seconds {(round(t_filter/nfits,1))} s/channel)')
-    logger.info(f'Island counting took {t_count} seconds {(round(t_count/nfits,1))} s/channel)')
-    logger.info(f'Total processing time was {t_total} seconds {(round(t_total/nfits,1))} s/channel)')
+    
+    logger.info(f'Mask making took {t_proc} seconds ({(round(t_proc/nfits,1))} s/channel)')
+    logger.info(f'Mask processing took {t_filter} seconds ({(round(t_filter/nfits,1))} s/channel)')
+    logger.info(f'Island counting took {t_count} seconds ({(round(t_count/nfits,1))} s/channel)')
+    logger.info(f'Total processing time was {t_total} seconds ({(round(t_total/nfits,1))} s/channel)')
+
+    logger.info(f'Mask making .......................... : {t_proc} seconds ({(round(t_proc/nfits,1))} s/channel)')
+    logger.info(f'Mask processing ...................... : {t_filter} seconds ({(round(t_filter/nfits,1))} s/channel)')
+    logger.info(f'Island counting ...................... : {t_count} seconds ({(round(t_count/nfits,1))} s/channel)')
+    logger.info(f'Total processing time ................ : seconds ({(round(t_total/nfits,1))} s/channel)')
+
     spacer()
 
 if __name__ == '__main__':

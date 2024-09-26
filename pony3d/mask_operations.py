@@ -2,13 +2,39 @@
 # ian.heywood@physics.ox.ac.uk
 
 
+import gc
 import logging
 import numpy as np
 import os
 import scipy.special
 import time
-from scipy.ndimage import binary_dilation, binary_erosion, convolve, minimum_filter, label, binary_fill_holes
+from astropy.coordinates import SkyCoord
+from astropy import units as u
+from astropy.wcs import WCS
+from scipy.ndimage import binary_dilation, binary_erosion, convolve, minimum_filter
+from scipy.ndimage import find_objects, center_of_mass, label, binary_fill_holes
 from pony3d.file_operations import get_image, flush_image, load_cube
+
+
+def format_ra_dec(ra,dec,sep=':'):
+    """
+    Converts ra and dec in decimal degrees to hms/dms format
+
+    Args:
+    ra (float): right ascension in decimal degres
+    dec (float): declination in decimal degrees
+    sep (string): delimiter character for output
+
+    Returns:
+    tuple: RA and Dec strings in hms/dms format, and an ID for the catalogue
+    """
+
+    coord = SkyCoord(ra=ra*u.deg, dec=dec*u.deg, frame='icrs')
+    ra_hms = str(coord.ra.to_string(unit=u.hour, sep=':', precision=1, pad= True))
+    dec_dms = str(coord.dec.to_string(unit=u.deg, sep=':', precision=2, alwayssign=True, pad=True))
+#    src_id = f'J{ra_hms.split(".")[0].replace(":","")}{dec_dms.split(".")[0].replace(":","")}'
+    src_id = f'J{ra_hms.replace(":","")}{dec_dms.replace(":","")}'
+    return ra_hms,dec_dms,src_id
 
 
 def get_mask_and_noise(input_image, threshold, boxsize, trim):
@@ -258,4 +284,81 @@ def count_islands(input_fits, orig_fits, idx):
     labeled_mask_image, n_islands = label(input_image)
     orig_image,orig_header = get_image(orig_fits)
     rms = np.nanstd(orig_image)
-    logging.info(f'[{log_prefix}_{idx}] Clean parameters: {input_fits} {n_islands} {rms}')
+    logging.info(f'[{log_prefix}_{idx}] Channel mask parameters: {input_fits} {n_islands} {rms}')
+
+
+def extract_islands(image_subset, mask_subset, opdir, catalogue, subcubes, padspatial, padspectral, catname, cubetag overwrite, idx):
+    """
+    Load a subset of channels into a cube
+    Label each region
+    Determine centre of gravity of each region to get RA / Dec / freq ---> catalogue (if requested)
+    Extract a FITS subcube for each region (if requested)
+
+    Args:
+    image_subset (list): list of input radio images
+    mask_subset (list): List of mask files.
+    catalogue (bool): Switch to write out catalogue or not
+    subcubes (bool): Switch to write out subcubes or not
+    padspatial (int): Padding for subcubes in the spatial dimensions
+    padspectral (int): Padding for subcubes in the spectral dimension
+    catname (str): output file for the catalogue (if applicable)
+    cubetag (str): folder name and tag for the subcubes
+    overwrite (bool): Whether to overwrite existing files.
+    idx (int): Index for logging.
+    """
+
+    f_hi = 1420.40575177 # HI line in MHz
+    tdl = '_-pony-_' # weird delimiter string to avoid split errors from the catalogue temp files
+
+    log_prefix = 'Extract'
+    idx = str(idx).zfill(5)
+    logging.info(f'[{log_prefix}_{idx}] Worker process {idx} operating on image subset {mask_subset[0]} -- {mask_subset[-1]}')
+    template_fits = []
+    output_fits = []
+    exists = []
+
+    logging.info(f'[{log_prefix}_{idx}] Reading subset')
+    cube = load_cube(mask_subset) != 0
+    cube = cube.astype(bool)
+
+    dummy_img, header = get_image(mask_subset[0])
+    wcs = WCS(header)
+    freq0 = header.get('CRVAL3')
+    df = header.get('CDELT3')
+
+    # Label the cube and free up the RAM used by the boolean array and the template FITS image
+    labeled_cube, n_islands = label(cube)
+    del cube 
+    del dummy_img
+    gc.collect()
+
+    bounding_boxes = find_objects(labeled_cube)
+
+    for region_idx, bbox in enumerate(bounding_boxes, start = 1):
+
+        if bbox[2].stop < labeled_cube.shape[2]: # check that the island does not butt up against the top end of the cube
+           
+            sub_array = labeled_cube[bbox]
+            com = center_of_mass(sub_array == region_idx)
+            com = tuple(c + s.start for c, s in zip(com, bbox))
+            ra, dec, xxx = wcs.pixel_to_world_values(com[1],com[0],0)
+            ra = round(float(ra),5)
+            dec = round(float(dec),5)
+            ra_hms, dec_dms, src_id = format_ra_dec(ra,dec)
+            ch_com = com[2]
+            f_com = round(((freq0+(ch_com*df))/1e6),3)
+            z_com = round(((f_hi/f_com) - 1.0),4)
+            ch0 = bbox[2].start 
+            ch1 = bbox[2].stop
+            f0 = freq0+(ch0*df)
+            f1 = freq0+(ch1*df)
+            com_fits = image_subset[round(ch_com)].split('/')[-1]
+            if catalogue:
+                fname = f'{src_id}{tdl}{ra}{tdl}{dec}{tdl}{ch0}{tdl}{ch1}{tdl}{f_com}{tdl}{z_com}{tdl}{com_fits}'
+                f = open(fname,'w')
+                f.close()
+              #  print(src_id,ra_hms,dec_dms,ch0,ch1,f_com,z_com,com_fits)
+                fp = fname.split(tdl)
+                print(f'{fp[0]:<25}{ra:<12}{dec:<12}{f_com:<12}{z_com:<12}')
+
+    # once the bboxes are in place the labeled array can be deleted?

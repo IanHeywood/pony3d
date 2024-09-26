@@ -9,7 +9,7 @@ import numpy as np
 from astropy.io import fits
 
 
-def create_directories(opdir, masktag, noisetag, averagetag, filtertag, savenoise, saveaverage, minchans):
+def create_directories(opdir, masktag, noisetag, averagetag, filtertag, cubetag, savenoise, saveaverage, catalogue, subcubes):
     """
     Create necessary directories for output files.
 
@@ -33,6 +33,10 @@ def create_directories(opdir, masktag, noisetag, averagetag, filtertag, savenois
         os.mkdir(f'{opdir}/{averagetag}')
     if not os.path.isdir(f'{opdir}/{filtertag}'):
         os.mkdir(f'{opdir}/{filtertag}')
+    if catalogue and not.os.path.isidr(f'{opdir}/cat_temp'):
+        os.mkdir(f'{opdir}/{filtertag}')        
+    if subcubes and not os.path.isdir(f'{opdir}/{cubetag}'):
+        os.mkdir(f'{opdir}/{cubetag}')
 
 
 def get_image(fits_file):

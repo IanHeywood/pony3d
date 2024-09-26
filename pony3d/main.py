@@ -43,6 +43,12 @@ def main():
     proc_group.add_argument('--specdilate', type=int, default=3, metavar='', help='Iterations of dilation in the spectral dimension (default = 3, set to 0 to disable)')
     proc_group.add_argument('--boxcar', type=int, default=1, metavar='', help='Width of boxcar window to apply (odd numbers preferred, default = 1, i.e., no averaging)')
 
+    extraction_group = parser.add_argument_group('island extraction arguments')
+    extraction_group.add_argument('--catalogue', default=False, action = 'store_true', help='Write out the 3D locations of each island (default = do not write catalogue)')
+    extraction_group.add_argument('--subcubes', default=False, action = 'store_true', help='Produce 3D FITS sub-cubes for each island (default = do not generate subcubes)')
+    extraction_group.add_argument('--padspatial', default=50, metavar='', help='Pad the subcube spatial dimensions around each island with this number of pixels (default = 50)')
+    extraction_group.add_argument('--padspectral', default=10, metavar='', help='Pad the subcube spectral dimensions around each island with this number of channels (default = 10)')
+
     output_group = parser.add_argument_group('output arguments')
     output_group.add_argument('--saveaverage', action='store_true', help='Save the boxcar-averaged images (default = do not save)')
     output_group.add_argument('--savenoise', action='store_true', help='Enable to export noise images as FITS files (default = do not save)')
@@ -51,13 +57,16 @@ def main():
     output_group.add_argument('--noisetag', default='noise', metavar='', help='Suffix and subfolder name for noise images (default = noise)')
     output_group.add_argument('--averagetag', default='boxavg', metavar='', help='Suffix and subfolder name for boxcar averaged images (default = boxavg)')
     output_group.add_argument('--filtertag', default='filtered', metavar='', help='Suffix and subfolder name for filtered images (default = filtered)')
-    output_group.add_argument('--labeltag', default='labeled', metavar='', help='Suffix and subfolder name for labeled images (default = labeled)')
-    output_group.add_argument('--force', dest='overwrite', action='store_true', help='Overwrite existing FITS outputs (default = do not overwrite)')
+    output_group.add_argument('--cubetag', default = 'subcubes', metavar = '', help='Suffix and folder name for subcubes (default = subcubes)')
+    output_group.add_argument('--catname', default = '', metavar = '', help='Filename for output catalogue (default = auto generated)')
+    
+output_group.add_argument('--force', dest='overwrite', action='store_true', help='Overwrite existing FITS outputs (default = do not overwrite)')
 
     parallel_group = parser.add_argument_group('parallelism arguments')
     parallel_group.add_argument('--j', '-j', type=int, default=24, metavar='', help='Number of worker processes (default = 24)')
     parallel_group.add_argument('--maxwrites', type=int, default = 4, metavar = '', help = 'Maximum number of concurrent processes that can write to disk (default = 4)')
-    parallel_group.add_argument('--chanchunk', type=int, default=16, metavar='', help='Number of channels to load per worker when processing islands (default = 16)')
+    parallel_group.add_argument('--chanchunk', type=int, default=128, metavar='', help='Number of channels to load per worker when processing islands (default = 128)')
+    parallel_group.add_argument('--overlap', type=int, default=-1, metavar = '', help='Number of overlapping channels between chunks (default = 2 x minchans)')
 
     parser.add_argument('input_pattern', help='Pattern for the sequence of FITS files to process')
 
@@ -82,12 +91,19 @@ def main():
     noisetag = args.noisetag
     averagetag = args.averagetag
     filtertag = args.filtertag
-    labeltag = args.labeltag
     overwrite = args.overwrite
+
+    catalogue = args.catalogue
+    subcubes = args.subcubes
+    padspatial = args.padspatial
+    padspectral = args.padspectral
+
     j = args.j
     maxwrites = args.maxwrites
     chanchunk = args.chanchunk
+    overlap = args.overlap
 
+    if overlap == -1: overlap = int(2*minchans)
     # Input pattern for FITS files
     input_pattern = args.input_pattern
 
@@ -95,7 +111,7 @@ def main():
 #    semaphore = multiprocessing.Semaphore(maxwrites)
 
     # Create directories
-    create_directories(opdir, masktag, noisetag, averagetag, filtertag, savenoise, saveaverage, minchans)
+    create_directories(opdir, masktag, noisetag, averagetag, filtertag, cubetag, savenoise, saveaverage, subcubes)
 
 
     fits_list = natural_sort(glob.glob(f'*{input_pattern}*'))
@@ -122,6 +138,11 @@ def main():
         logger.info(f'Channels per boxcar worker ........... : {boxcar}')
         logger.info(f'Sacrificial edge channels ............ : {boxcar // 2}')
         logger.info(f'Save boxcar averaged images .......... : {"Yes" if saveaverage else "No"}')
+    logger.info(f'Write catalogue ...................... : {"Yes" if catalogue else "No"}')
+    logger.info(f'Create subcubes ...................... : {"Yes" if subcubes else "No"}')
+    if subcubes:
+        logger.info(f'Spatial padding for subcubes ......... : {padspatial}')
+        logger.info(f'Spectral padding for subcubes ........ : {padspectral}')
     logger.info(f'Save noise images .................... : {"Yes" if savenoise else "No"}')
     logger.info(f'Output folder ........................ : {opdir}')
     logger.info(f'Overwrite existing files ............. : {"Yes" if overwrite else "No"}')
@@ -166,9 +187,9 @@ def main():
             logger.error('No mask images found')
             sys.exit()
         nchunks = nfits // chanchunk
-        mask_subsets = [mask_list[i*chanchunk:(i+1)*chanchunk+2] for i in range(nchunks-1)] # CHECK THIS
+        mask_subsets = [mask_list[i*chanchunk:(i+1)*chanchunk+overlap] for i in range(nchunks-1)] # CHECK THIS
         mask_subsets.append(mask_list[(nchunks-1)*chanchunk:])
-        logger.info(f'Filtering masks in {len(mask_subsets)} subsets')
+        logger.info(f'Filtering masks in {len(mask_subsets)} subset(s)')
 
         iterable_params = zip(
             mask_subsets, [specdilate]*len(mask_subsets), [minchans]*len(mask_subsets), [masktag]*len(mask_subsets), 
@@ -197,9 +218,9 @@ def main():
     spacer()
 
     logger.info(f'Mask making .......................... : {t_proc} seconds ({(round(t_proc/nfits,1))} s/channel)')
-    logger.info(f'Mask processing ...................... : {t_filter} seconds ({(round(t_filter/nfits,1))} s/channel)')
+    logger.info(f'Island processing .................... : {t_filter} seconds ({(round(t_filter/nfits,1))} s/channel)')
     logger.info(f'Island counting ...................... : {t_count} seconds ({(round(t_count/nfits,1))} s/channel)')
-    logger.info(f'Total processing time ................ : seconds ({(round(t_total/nfits,1))} s/channel)')
+    logger.info(f'Total processing time ................ : {t_total} seconds ({(round(t_total/nfits,1))} s/channel)')
 
     spacer()
 

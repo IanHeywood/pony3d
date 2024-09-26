@@ -17,7 +17,7 @@ from pony3d.mask_operations import make_mask, make_averaged_mask, filter_mask, c
 
 def main():
 
-
+    timestamp = time.strftime("%d%m%Y_%H%M%S")
     logger = initialize_logging()
 
 
@@ -59,8 +59,7 @@ def main():
     output_group.add_argument('--filtertag', default='filtered', metavar='', help='Suffix and subfolder name for filtered images (default = filtered)')
     output_group.add_argument('--cubetag', default = 'subcubes', metavar = '', help='Suffix and folder name for subcubes (default = subcubes)')
     output_group.add_argument('--catname', default = '', metavar = '', help='Filename for output catalogue (default = auto generated)')
-    
-output_group.add_argument('--force', dest='overwrite', action='store_true', help='Overwrite existing FITS outputs (default = do not overwrite)')
+    output_group.add_argument('--force', dest='overwrite', action='store_true', help='Overwrite existing FITS outputs (default = do not overwrite)')
 
     parallel_group = parser.add_argument_group('parallelism arguments')
     parallel_group.add_argument('--j', '-j', type=int, default=24, metavar='', help='Number of worker processes (default = 24)')
@@ -84,19 +83,24 @@ output_group.add_argument('--force', dest='overwrite', action='store_true', help
     specdilate = args.specdilate
     boxcar = args.boxcar
 
-    saveaverage = args.saveaverage
-    savenoise = args.savenoise
-    opdir = args.opdir or f'pony3d.output.{time.strftime("%d%m%Y_%H%M%S")}'
-    masktag = args.masktag
-    noisetag = args.noisetag
-    averagetag = args.averagetag
-    filtertag = args.filtertag
-    overwrite = args.overwrite
-
     catalogue = args.catalogue
     subcubes = args.subcubes
     padspatial = args.padspatial
     padspectral = args.padspectral
+
+    saveaverage = args.saveaverage
+    savenoise = args.savenoise
+    opdir = args.opdir or f'pony3d.output.{timestamp}'
+    masktag = args.masktag
+    noisetag = args.noisetag
+    averagetag = args.averagetag
+    filtertag = args.filtertag
+    cubetag = args.cubetag
+    catname = args.catname
+    overwrite = args.overwrite
+
+    if catname == '':
+        catname = 'pony3.sources.{timestamp}.txt'
 
     j = args.j
     maxwrites = args.maxwrites
@@ -104,16 +108,17 @@ output_group.add_argument('--force', dest='overwrite', action='store_true', help
     overlap = args.overlap
 
     if overlap == -1: overlap = int(2*minchans)
+
+
     # Input pattern for FITS files
     input_pattern = args.input_pattern
 
     pool = Pool(processes=j)
-#    semaphore = multiprocessing.Semaphore(maxwrites)
+#   semaphore = multiprocessing.Semaphore(maxwrites)
 
     # Create directories
-    create_directories(opdir, masktag, noisetag, averagetag, filtertag, cubetag, savenoise, saveaverage, subcubes)
-
-
+    create_directories(opdir, masktag, noisetag, averagetag, filtertag, cubetag, savenoise, saveaverage, catalogue, subcubes)
+  
     fits_list = natural_sort(glob.glob(f'*{input_pattern}*'))
     if not fits_list:
         logger.error('The specified pattern returns no files')
@@ -122,6 +127,8 @@ output_group.add_argument('--force', dest='overwrite', action='store_true', help
         nfits = len(fits_list)
         logger.info(f'Number of input images ............... : {nfits}')
         if j > nfits: j = nfits
+
+    nchunks = nfits // chanchunk
 
 
     # Report options for log
@@ -186,8 +193,7 @@ output_group.add_argument('--force', dest='overwrite', action='store_true', help
         if not mask_list:
             logger.error('No mask images found')
             sys.exit()
-        nchunks = nfits // chanchunk
-        mask_subsets = [mask_list[i*chanchunk:(i+1)*chanchunk+overlap] for i in range(nchunks-1)] # CHECK THIS
+        mask_subsets = [mask_list[i*chanchunk:(i+1)*chanchunk+overlap] for i in range(nchunks-1)] 
         mask_subsets.append(mask_list[(nchunks-1)*chanchunk:])
         logger.info(f'Filtering masks in {len(mask_subsets)} subset(s)')
 
@@ -210,7 +216,36 @@ output_group.add_argument('--force', dest='overwrite', action='store_true', help
     iterable_params = zip(mask_list, orig_list, np.arange(len(mask_list)))
     pool.starmap(count_islands, iterable_params)
 
-    t_count = round((time.time() - t_filter),1)
+    t_count = time.time()
+
+    # Source extraction
+    if catalog or subcubes:
+        if minchans != 0 or specdilate != 0:
+            mask_list = natural_sort(glob.glob(f'{opdir}/{filtertag}/*{input_pattern}*'))
+            orig_list = [mask_fits.split('/')[-1].replace(f'.{filtertag}', '') for mask_fits in mask_list]
+        else:
+            mask_list = natural_sort(glob.glob(f'{opdir}/{masktag}/*{input_pattern}*'))
+            orig_list = [mask_fits.split('/')[-1].replace(f'.{masktag}', '') for mask_fits in mask_list]
+        if not mask_list:
+            logger.error('No mask images found')
+            sys.exit()
+        mask_subsets = [mask_list[i*chanchunk:(i+1)*chanchunk+overlap] for i in range(nchunks-1)] 
+        mask_subsets.append(mask_list[(nchunks-1)*chanchunk:])
+        orig_subsets = [orig_list[i*chanchunk:(i+1)*chanchunk+overlap] for i in range(nchunks-1)] 
+        orig_subsets.append(orig_list[(nchunks-1)*chanchunk:])
+        logger.info(f'Source extraction proceeding over {len(mask_subsets)} subset(s)')
+
+        iterable_params = zip(
+            orig_subsets, mask_subsets, [opdir]*len(mask_subsets), [catalogue]*len(mask_subsets), [subcubes]*len(mask_subsets), 
+            [padspatial]*len(mask_subsets), [padspectral]*len(mask_subsets), catname*len(mask_subsets), cubetag*len(mask_subsets),
+            overwrite*len(mask_subsets),np.arange(len(mask_subsets))
+        )
+        pool.starmap(extract_islands, iterable_params)
+
+
+    # Report timing
+
+    t_count = round((t_count - t_filter),1)
     t_filter = round((t_filter - t_proc),1)
     t_proc = round((t_proc - t0),1)
     t_total = round((time.time() - t0),1)

@@ -3,6 +3,7 @@
 
 
 import gc
+import glob
 import logging
 import numpy as np
 import os
@@ -287,12 +288,12 @@ def count_islands(input_fits, orig_fits, idx):
     logging.info(f'[{log_prefix}_{idx}] Channel mask parameters: {input_fits} {n_islands} {rms}')
 
 
-def extract_islands(image_subset, mask_subset, opdir, catalogue, subcubes, padspatial, padspectral, catname, cubetag overwrite, idx):
+def extract_islands(image_subset, mask_subset, opdir, catalogue, subcubes, padspatial, padspectral, catname, cubetag, overwrite, idx):
     """
     Load a subset of channels into a cube
     Label each region
     Determine centre of gravity of each region to get RA / Dec / freq ---> catalogue (if requested)
-    Extract a FITS subcube for each region (if requested)
+    Extract a FITS subcube for each region from the original data (if requested)
 
     Args:
     image_subset (list): list of input radio images
@@ -331,7 +332,9 @@ def extract_islands(image_subset, mask_subset, opdir, catalogue, subcubes, padsp
     del cube 
     del dummy_img
     gc.collect()
-
+    
+    logging.info(f'[{log_prefix}_{idx}] Image subset contains {n_island} islands')
+    
     bounding_boxes = find_objects(labeled_cube)
 
     for region_idx, bbox in enumerate(bounding_boxes, start = 1):
@@ -359,6 +362,23 @@ def extract_islands(image_subset, mask_subset, opdir, catalogue, subcubes, padsp
                 f.close()
               #  print(src_id,ra_hms,dec_dms,ch0,ch1,f_com,z_com,com_fits)
                 fp = fname.split(tdl)
-                print(f'{fp[0]:<25}{ra:<12}{dec:<12}{f_com:<12}{z_com:<12}')
+                print(f'{fp[0]:<25}{ra:<12}{dec:<12}{f_com:<12}{z_com:<12}\n')
+
+    if catalogue:
+        logging.info(f'[{log_prefix}_{idx}] Writing source catalogue {catname}')
+        src_list = sorted(glob.glob(f'{opdir}/cat_temp/*'))
+        f = open(f'{opdir}/{catname}','w')
+        for src in src_list:
+            fp = src.split(tdl)
+            f.write(f'{fp[0]:<25}{ra:<12}{dec:<12}{f_com:<12}{z_com:<12}\n')
+        f.close()
+        logging.info(f'[{log_prefix}_{idx}] Wrote {len(src_list)} sources')
 
     # once the bboxes are in place the labeled array can be deleted?
+
+
+
+
+
+
+

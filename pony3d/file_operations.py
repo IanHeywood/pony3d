@@ -33,8 +33,8 @@ def create_directories(opdir, masktag, noisetag, averagetag, filtertag, cubetag,
         os.mkdir(f'{opdir}/{averagetag}')
     if not os.path.isdir(f'{opdir}/{filtertag}'):
         os.mkdir(f'{opdir}/{filtertag}')
-    if catalogue and not.os.path.isidr(f'{opdir}/cat_temp'):
-        os.mkdir(f'{opdir}/{filtertag}')        
+    if catalogue and not os.path.isdir(f'{opdir}/cat_temp'):
+        os.mkdir(f'{opdir}/cat_temp')        
     if subcubes and not os.path.isdir(f'{opdir}/{cubetag}'):
         os.mkdir(f'{opdir}/{cubetag}')
 

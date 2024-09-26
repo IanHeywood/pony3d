@@ -100,7 +100,7 @@ def main():
     overwrite = args.overwrite
 
     if catname == '':
-        catname = 'pony3.sources.{timestamp}.txt'
+        catname = f'pony3.sources.{timestamp}.txt'
 
     j = args.j
     chanchunk = args.chanchunk
@@ -242,6 +242,15 @@ def main():
         )
         pool.starmap(extract_islands, iterable_params)
 
+        if catalogue:
+            logging.info(f'[{log_prefix}_{idx}] Writing source catalogue {catname}')
+            src_list = sorted(glob.glob(f'{opdir}/cat_temp/*'))
+            f = open(f'{opdir}/{catname}','w')
+            for src in src_list:
+                fp = src.split(tdl)
+                f.write(f'{fp[0]:<25}{ra:<12}{dec:<12}{f_com:<12}{z_com:<12}\n')
+            f.close()
+            logging.info(f'[{log_prefix}_{idx}] Wrote {len(src_list)} sources')
 
     # Report timing
 

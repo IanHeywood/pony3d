@@ -12,7 +12,8 @@ from multiprocessing import Pool
 
 from pony3d.terminal_operations import initialize_logging, hello, spacer
 from pony3d.file_operations import create_directories, natural_sort
-from pony3d.mask_operations import make_mask, make_averaged_mask, filter_mask, count_islands
+from pony3d.mask_operations import make_mask, make_averaged_mask
+from pony3d.mask_operations import filter_mask, count_islands, extract_islands
 
 
 def main():
@@ -63,7 +64,6 @@ def main():
 
     parallel_group = parser.add_argument_group('parallelism arguments')
     parallel_group.add_argument('--j', '-j', type=int, default=24, metavar='', help='Number of worker processes (default = 24)')
-    parallel_group.add_argument('--maxwrites', type=int, default = 4, metavar = '', help = 'Maximum number of concurrent processes that can write to disk (default = 4)')
     parallel_group.add_argument('--chanchunk', type=int, default=128, metavar='', help='Number of channels to load per worker when processing islands (default = 128)')
     parallel_group.add_argument('--overlap', type=int, default=-1, metavar = '', help='Number of overlapping channels between chunks (default = 2 x minchans)')
 
@@ -103,7 +103,6 @@ def main():
         catname = 'pony3.sources.{timestamp}.txt'
 
     j = args.j
-    maxwrites = args.maxwrites
     chanchunk = args.chanchunk
     overlap = args.overlap
 
@@ -154,7 +153,6 @@ def main():
     logger.info(f'Output folder ........................ : {opdir}')
     logger.info(f'Overwrite existing files ............. : {"Yes" if overwrite else "No"}')
     logger.info(f'Number of worker processes ........... : {j}')
-    logger.info(f'Maximum number of concurrent writes .. : {maxwrites}')
     logger.info(f'Channels per processing worker ....... : {chanchunk}')
     spacer()
 
@@ -196,10 +194,10 @@ def main():
         mask_subsets = [mask_list[i*chanchunk:(i+1)*chanchunk+overlap] for i in range(nchunks-1)] 
         mask_subsets.append(mask_list[(nchunks-1)*chanchunk:])
         logger.info(f'Filtering masks in {len(mask_subsets)} subset(s)')
-
+        ns = len(mask_subsets)
         iterable_params = zip(
-            mask_subsets, [specdilate]*len(mask_subsets), [minchans]*len(mask_subsets), [masktag]*len(mask_subsets), 
-            [filtertag]*len(mask_subsets), [overwrite]*len(mask_subsets), np.arange(len(mask_subsets))
+            mask_subsets, [specdilate]*ns, [minchans]*ns, [masktag]*ns, 
+            [filtertag]*ns, [overwrite]*ns, np.arange(ns)
         )
         pool.starmap(filter_mask, iterable_params)
 
@@ -219,7 +217,7 @@ def main():
     t_count = time.time()
 
     # Source extraction
-    if catalog or subcubes:
+    if catalogue or subcubes:
         if minchans != 0 or specdilate != 0:
             mask_list = natural_sort(glob.glob(f'{opdir}/{filtertag}/*{input_pattern}*'))
             orig_list = [mask_fits.split('/')[-1].replace(f'.{filtertag}', '') for mask_fits in mask_list]
@@ -231,14 +229,16 @@ def main():
             sys.exit()
         mask_subsets = [mask_list[i*chanchunk:(i+1)*chanchunk+overlap] for i in range(nchunks-1)] 
         mask_subsets.append(mask_list[(nchunks-1)*chanchunk:])
-        orig_subsets = [orig_list[i*chanchunk:(i+1)*chanchunk+overlap] for i in range(nchunks-1)] 
-        orig_subsets.append(orig_list[(nchunks-1)*chanchunk:])
+        input_fits_subsets = [orig_list[i*chanchunk:(i+1)*chanchunk+overlap] for i in range(nchunks-1)] 
+        input_fits_subsets.append(orig_list[(nchunks-1)*chanchunk:])
         logger.info(f'Source extraction proceeding over {len(mask_subsets)} subset(s)')
 
+        ns = len(mask_subsets)
+
         iterable_params = zip(
-            orig_subsets, mask_subsets, [opdir]*len(mask_subsets), [catalogue]*len(mask_subsets), [subcubes]*len(mask_subsets), 
-            [padspatial]*len(mask_subsets), [padspectral]*len(mask_subsets), catname*len(mask_subsets), cubetag*len(mask_subsets),
-            overwrite*len(mask_subsets),np.arange(len(mask_subsets))
+            input_fits_subsets, mask_subsets, [opdir]*ns, [catalogue]*ns, [subcubes]*ns, 
+            [padspatial]*ns, [padspectral]*ns, [catname]*ns, [cubetag]*ns,
+            [overwrite]*ns, np.arange(ns)
         )
         pool.starmap(extract_islands, iterable_params)
 

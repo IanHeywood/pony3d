@@ -318,8 +318,8 @@ def extract_islands(image_subset, mask_subset, opdir, catalogue, subcubes, padsp
     output_fits = []
     exists = []
 
-    logging.info(f'[{log_prefix}_{idx}] Reading subset')
-    cube = load_cube(mask_subset) != 0
+    logging.info(f'[{log_prefix}_{idx}] Reading mask subset')
+    cube = load_cube(mask_subset) 
     cube = cube.astype(bool)
 
     dummy_img, header = get_image(mask_subset[0])
@@ -333,9 +333,10 @@ def extract_islands(image_subset, mask_subset, opdir, catalogue, subcubes, padsp
     del dummy_img
     gc.collect()
     
-    logging.info(f'[{log_prefix}_{idx}] Image subset contains {n_island} islands')
+    logging.info(f'[{log_prefix}_{idx}] Image subset contains {n_islands} islands')
     
     bounding_boxes = find_objects(labeled_cube)
+    src_ids = []
 
     for region_idx, bbox in enumerate(bounding_boxes, start = 1):
 
@@ -348,6 +349,7 @@ def extract_islands(image_subset, mask_subset, opdir, catalogue, subcubes, padsp
             ra = round(float(ra),5)
             dec = round(float(dec),5)
             ra_hms, dec_dms, src_id = format_ra_dec(ra,dec)
+            src_ids.append(src_id)
             ch_com = com[2]
             f_com = round(((freq0+(ch_com*df))/1e6),3)
             z_com = round(((f_hi/f_com) - 1.0),4)
@@ -374,8 +376,21 @@ def extract_islands(image_subset, mask_subset, opdir, catalogue, subcubes, padsp
         f.close()
         logging.info(f'[{log_prefix}_{idx}] Wrote {len(src_list)} sources')
 
-    # once the bboxes are in place the labeled array can be deleted?
+    # Free up the RAM taken up by the labeled cube before loading the image subset
 
+    if subcubes:
+        del labeled_cube
+        gc.collect()
+
+        logging.info(f'[{log_prefix}_{idx}] Reading input image subset')
+        data_cube = load_cube(image_subset) != 0
+
+        for src in range(0,len(src_ids)):
+            src_id = src_ids[src]
+            logging.info(f'[{log_prefix}_{idx}] Writing subcube for {src_id}')
+            bbox = bounding_boxes[src_id]
+            centre_index = tuple((s.start + s.stop - 1) // 2 for s in bbox)
+            ra, dec, xxx = wcs.pixel_to_world_values(centre_index[1],centre_index[0],0)
 
 
 

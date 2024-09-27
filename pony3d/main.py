@@ -255,18 +255,22 @@ def main():
             f.close()
             logger.info(f'Wrote {len(src_list)} sources')
 
+    t_extract = time.time()
+
     # Report timing
 
-    t_count = round((t_count - t_filter),1)
-    t_filter = round((t_filter - t_proc),1)
     t_proc = round((t_proc - t0),1)
+    t_filter = round((t_filter - t_proc),1)
+    t_count = round((t_count - t_filter),1)
+    t_extract = round((t_extract - t_count),1)
     t_total = round((time.time() - t0),1)
 
     spacer()
 
     logger.info(f'Mask making .......................... : {t_proc} seconds ({(round(t_proc/nfits,1))} s/channel)')
-    logger.info(f'Island processing .................... : {t_filter} seconds ({(round(t_filter/nfits,1))} s/channel)')
+    if minchans != 0 or specdilate != 0: logger.info(f'Island processing .................... : {t_filter} seconds ({(round(t_filter/nfits,1))} s/channel)')
     logger.info(f'Island counting ...................... : {t_count} seconds ({(round(t_count/nfits,1))} s/channel)')
+    if catalogue or subcubes: logger.info(f'Source extraction .................... : {t_extract} seconds ({(round(t_extract/nfits,1))} s/channel)')
     logger.info(f'Total processing time ................ : {t_total} seconds ({(round(t_total/nfits,1))} s/channel)')
 
     spacer()

@@ -85,6 +85,41 @@ def load_cube(fits_list):
     return np.dstack(temp)
 
 
+# def load_cube_with_concat(fits_list):
+#     """
+#     Load a sequence of FITS images with RA and Dec axes and a Freq axis of length 1 into a 3D numpy array.
+
+#     Args:
+#     fits_list (list): List of FITS file paths.
+
+#     Returns:
+#     np.ndarray: 3D cube of image data (Freq, Dec, RA).
+#     """
+#     # List to hold each 3D array (1, Dec, RA) from each FITS file
+#     image_list = []
+    
+#     # Load each FITS file and append the data to the list
+#     for fits_file in fits_list:
+#         # Load the FITS data; assuming data shape is (Dec, RA) or (1, Dec, RA)
+#         data = fits.getdata(fits_file)
+        
+#         # If data is 2D (Dec, RA), expand to 3D (1, Dec, RA)
+#         if len(data.shape) == 2:
+#             data = data[np.newaxis, :, :]  # Add a new axis for the frequency dimension
+
+#         # Ensure data is now 3D with shape (1, Dec, RA)
+#         if len(data.shape) != 3 or data.shape[0] != 1:
+#             raise ValueError(f"Unexpected data shape {data.shape} in file {fits_file}. Expected (1, Dec, RA).")
+
+#         # Append the data to the list
+#         image_list.append(data)
+
+#     # Concatenate all 3D arrays along the frequency axis (axis=0)
+#     cube = np.concatenate(image_list, axis=0)
+    
+#     return cube
+
+
 def natural_sort(l):
     """
     Sort the given iterable in the way that humans expect.

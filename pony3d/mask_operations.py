@@ -17,6 +17,11 @@ from scipy.ndimage import find_objects, center_of_mass, label, binary_fill_holes
 from pony3d.file_operations import get_image, flush_image, load_cube
 
 
+def get_tdl():
+    tdl = '_-pony-_' # weird delimiter string to avoid split errors from the catalogue temp files
+    return tdl
+
+
 def format_ra_dec(ra,dec,sep=':'):
     """
     Converts ra and dec in decimal degrees to hms/dms format
@@ -309,7 +314,7 @@ def extract_islands(image_subset, mask_subset, opdir, catalogue, subcubes, padsp
     """
 
     f_hi = 1420.40575177 # HI line in MHz
-    tdl = '_-pony-_' # weird delimiter string to avoid split errors from the catalogue temp files
+    tdl = get_tdl()
 
     log_prefix = 'Extract'
     idx = str(idx).zfill(5)

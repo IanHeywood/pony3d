@@ -12,7 +12,7 @@ from multiprocessing import Pool
 
 from pony3d.terminal_operations import initialize_logging, hello, spacer
 from pony3d.file_operations import create_directories, natural_sort
-from pony3d.mask_operations import make_mask, make_averaged_mask
+from pony3d.mask_operations import get_tdl, make_mask, make_averaged_mask
 from pony3d.mask_operations import filter_mask, count_islands, extract_islands
 
 
@@ -243,6 +243,7 @@ def main():
         pool.starmap(extract_islands, iterable_params)
 
         if catalogue:
+            tdl = get_tdl()
             logger.info(f'Writing source catalogue {catname}')
             src_list = sorted(glob.glob(f'{opdir}/cat_temp/*'))
             f = open(f'{opdir}/{catname}','w')

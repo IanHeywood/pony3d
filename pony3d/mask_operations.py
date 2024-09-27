@@ -360,11 +360,11 @@ def extract_islands(image_subset, mask_subset, opdir, catalogue, subcubes, padsp
             z_com = round(((f_hi/f_com) - 1.0),4)
             ch0 = bbox[2].start 
             ch1 = bbox[2].stop
-            f0 = freq0+(ch0*df)
-            f1 = freq0+(ch1*df)
+            f0 = (freq0+(ch0*df))/1e6
+            f1 = (freq0+(ch1*df))/1e6
             com_fits = image_subset[round(ch_com)].split('/')[-1]
             if catalogue:
-                fname = f'{opdir}/cat_temp/{src_id}{tdl}{ra}{tdl}{dec}{tdl}{ch0}{tdl}{ch1}{tdl}{f_com}{tdl}{z_com}{tdl}{com_fits}'
+                fname = f'{opdir}/cat_temp/{src_id}{tdl}{ra}{tdl}{dec}{tdl}{f0}{tdl}{f1}{tdl}{f_com}{tdl}{z_com}{tdl}{com_fits}'
                 f = open(fname,'w')
                 f.close()
 #                fp = fname.split(tdl)

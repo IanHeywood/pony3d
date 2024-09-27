@@ -247,9 +247,11 @@ def main():
             logger.info(f'Writing source catalogue {catname}')
             src_list = sorted(glob.glob(f'{opdir}/cat_temp/*'))
             f = open(f'{opdir}/{catname}','w')
+            f.write(f'# src_id, ra, dec, f_com, z_com, f0, f1\n')
             for src in src_list:
                 fp = src.split(tdl)
-                f.write(f'{fp[0]:<25}{ra:<12}{dec:<12}{f_com:<12}{z_com:<12}\n')
+                # src_id, ra, dec, f_com, z_com, f0, f1 
+                f.write(f'{fp[0]:<25}{fp[1]:<12}{fp[2]:<12}{fp[5]:<12}{fp[6]:<12}{fp[3]:<12}{fp[4]:<12}\n')
             f.close()
             logger.info(f'Wrote {len(src_list)} sources')
 

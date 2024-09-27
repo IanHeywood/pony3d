@@ -363,7 +363,7 @@ def extract_islands(image_subset, mask_subset, opdir, catalogue, subcubes, padsp
                 f = open(fname,'w')
                 f.close()
 #                fp = fname.split(tdl)
-                print(f'{fp[0]:<25}{ra:<12}{dec:<12}{f_com:<12}{z_com:<12}\n')
+#                print(f'{fp[0]:<25}{ra:<12}{dec:<12}{f_com:<12}{z_com:<12}\n')
 
 
     # Free up the RAM taken up by the labeled cube before loading the image subset

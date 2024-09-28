@@ -262,7 +262,6 @@ def filter_mask(mask_subset, minchans, specdilate, masktag, filtertag, overwrite
         recon_struct = np.array([1,1,1])[None,None,:]
         cube = binary_dilation(cube, structure = recon_struct)
 
-
     # Write out filtered images
     for i, filtered_fits in enumerate(output_fits):
         if exists[i] and not overwrite:
@@ -271,6 +270,10 @@ def filter_mask(mask_subset, minchans, specdilate, masktag, filtertag, overwrite
             logging.info(f'[{log_prefix}_{idx}] Writing {filtered_fits}')
             template_image, header = get_image(template_fits[i])
             flush_image(cube[:, :, i + 1], header, filtered_fits)
+
+    del labeled_cube
+    del cube
+    gc.collect()
 
 
 def count_islands(input_fits, orig_fits, idx):
@@ -370,13 +373,10 @@ def extract_islands(image_subset, mask_subset, opdir, catalogue, subcubes, padsp
 #                fp = fname.split(tdl)
 #                print(f'{fp[0]:<25}{ra:<12}{dec:<12}{f_com:<12}{z_com:<12}\n')
 
-
-    # Free up the RAM taken up by the labeled cube before loading the image subset
+    del labeled_cube
+    gc.collect()
 
     if subcubes:
-        del labeled_cube
-        gc.collect()
-
         logging.info(f'[{log_prefix}_{idx}] Reading input image subset')
         data_cube = load_cube(image_subset) != 0
 

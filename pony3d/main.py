@@ -244,14 +244,14 @@ def main():
 
         if catalogue:
             tdl = get_tdl()
-            logger.info(f'Writing source catalogue {catname}')
+            logger.info(f'Collating detections and writing source catalogue {catname}')
             src_list = sorted(glob.glob(f'{opdir}/cat_temp/*'))
             f = open(f'{opdir}/{catname}','w')
             f.write(f'# src_id, ra, dec, f_com, z_com, f0, f1\n')
             for src in src_list:
                 fp = src.split(tdl)
-                # src_id, ra, dec, f_com, z_com, f0, f1 
-                f.write(f'{fp[0]:<25}{fp[1]:<12}{fp[2]:<12}{fp[5]:<12}{fp[6]:<12}{fp[3]:<12}{fp[4]:<12}\n')
+                # src_id, ra, dec, f_com, z_com, f0, f1 # need to round frequencies
+                f.write(f'{fp[0].split('/')[-1]':<25}{fp[1]:<12}{fp[2]:<12}{fp[5]:<12}{fp[6]:<12}{fp[3]:<12}{fp[4]:<12}\n')
             f.close()
             logger.info(f'Wrote {len(src_list)} sources')
 
@@ -259,11 +259,11 @@ def main():
 
     # Report timing
 
-    t_proc = round((t_proc - t0),1)
-    t_filter = round((t_filter - t_proc),1)
-    t_count = round((t_count - t_filter),1)
-    t_extract = round((t_extract - t_count),1)
     t_total = round((time.time() - t0),1)
+    t_extract = round((t_extract - t_count),1)
+    t_count = round((t_count - t_filter),1)
+    t_filter = round((t_filter - t_proc),1)
+    t_proc = round((t_proc - t0),1)
 
     spacer()
 

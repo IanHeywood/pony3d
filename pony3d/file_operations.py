@@ -68,7 +68,7 @@ def flush_image(image_data, header, fits_file):
     image_data (np.array): 2D array of image data.
     header: FITS file header (generally copied from the corresponding input image)
     """
-    fits.writeto(fits_file, image_data.astype(float), header, overwrite=True)
+    fits.writeto(fits_file, image_data, header, overwrite=True)
 
 
 def load_cube(fits_list):

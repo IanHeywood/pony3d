@@ -20,6 +20,7 @@ setup(
         'numpy',
         'scipy',
         'astropy',
+        'regions',
     ],
     entry_points={
         'console_scripts': [

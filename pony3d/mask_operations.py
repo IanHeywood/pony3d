@@ -12,6 +12,7 @@ import time
 from astropy.coordinates import SkyCoord
 from astropy import units as u
 from astropy.wcs import WCS
+from regions import Regions
 from scipy.ndimage import binary_dilation, binary_erosion, convolve, minimum_filter
 from scipy.ndimage import find_objects, center_of_mass, label, binary_fill_holes
 from pony3d.file_operations import get_image, flush_image, load_cube
@@ -41,6 +42,32 @@ def format_ra_dec(ra,dec,sep=':'):
 #    src_id = f'J{ra_hms.split(".")[0].replace(":","")}{dec_dms.split(".")[0].replace(":","")}'
     src_id = f'J{ra_hms.replace(":","")}{dec_dms.replace(":","")}'
     return ra_hms,dec_dms,src_id
+
+
+def apply_region_mask(image_data, header, region_file):
+    """
+    Apply a DS9/CARTA region mask to a FITS image.
+    
+    Parameters:
+    image_data (str): 2D numpy array containing the image data.
+    header (???): FITS header corresponding to the image data.
+    region_file (str): Path to the DS9/CARTA region file.
+
+    Returns:
+    masked_image (ndarray): Image data with the region applied as a mask (masked areas are set to np.nan).
+    """
+
+    wcs = WCS(header)
+    regions = Regions.read(region_file, format='ds9')
+    mask = np.ones_like(image_data, dtype=bool)
+    
+    for region in regions:
+        pixel_region = region.to_pixel(wcs)
+        region_mask = pixel_region.to_mask().to_image(image_data.shape)
+        mask &= np.isnan(region_mask)  
+
+    masked_image = np.where(mask, image_data, np.nan)
+    return masked_image
 
 
 def get_mask_and_noise(input_image, threshold, boxsize, trim):
@@ -132,6 +159,10 @@ def make_mask(input_fits, threshold, boxsize, dilate, trim, regionmask, invert, 
     if invert:
         logging.info(f'[{log_prefix}_{idx}] Inverting {input_fits}')
         input_image *= -1.0
+    if regionmask != '':
+        logging.info(f'[{log_prefix}_{idx}] Masking region(s) {regionmask}')
+        input_image = apply_region_mask(input_image, header, regionmask)
+
     logging.info(f'[{log_prefix}_{idx}] Finding islands')
     mask_image, noise_image = get_mask_and_noise(input_image, threshold, boxsize, trim)
  
@@ -171,23 +202,25 @@ def make_averaged_mask(input_fits_subset, threshold, boxsize, dilate, invert, tr
     logging.info(f'[{log_prefix}_{idx}] Worker process {idx} operating on image subset {input_fits_subset[0]} -- {input_fits_subset[-1]}')
     nfits = len(input_fits_subset)
     input_fits = input_fits_subset[nfits // 2]
+    input_image, header = get_image(input_fits) # Need a WCS for image output and any region masking
     mask_fits = os.path.join(opdir, masktag, input_fits.replace('.fits', f'.{masktag}.fits'))
     if os.path.isfile(mask_fits) and not overwrite:
         logging.info(f'[{log_prefix}_{idx}] Skipping {mask_fits} (overwrite disabled)')
         return
-
     logging.info(f'[{log_prefix}_{idx}] Reading subset')
     cube = load_cube(input_fits_subset)
     mean_image = np.nanmean(cube, axis=2)
     if invert:
-        logging.info(f'[{log_prefix}_{idx}] Inverting subset')
+        logging.info(f'[{log_prefix}_{idx}] Inverting averaged image')
         mean_image *= -1.0
+    if regionmask != '':
+        logging.info(f'[{log_prefix}_{idx}] Masking region(s) {regionmask}')
+        mean_image = apply_region_mask(mean_image, header, regionmask)
     logging.info(f'[{log_prefix}_{idx}] Finding islands')
     mask_image, noise_image = get_mask_and_noise(mean_image, threshold, boxsize, dilate, trim)
     if dilate > 0:
         mask_image = binary_dilation(mask_image, iterations=dilate)
     logging.info(f'[{log_prefix}_{idx}] Writing mask image {mask_fits}')
-    input_image, header = get_image(input_fits)
     flush_image(mask_image, header, mask_fits)
     if saveaverage:
         mean_fits = os.path.join(opdir, averagetag, input_fits.replace('.fits', f'.{averagetag}.fits'))

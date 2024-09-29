@@ -35,7 +35,7 @@ def main():
 
     preproc_group = parser.add_argument_group('image pre-processing arguments')
     preproc_group.add_argument('--trim', type=int, default=0, metavar='', help='Trim this number of pixels from any NaN boundaries to avoid noisy edges (default = 0)')
-    preproc_group.add_argument('--regionmask', default='', metavar='', help='Provide a region file that defines areas to exclude from the subsequent processing [NOT YET IMPLEMENTED]')
+    preproc_group.add_argument('--regionmask', default='', metavar='', help='Provide a region file that defines areas to exclude from the subsequent processing')
     preproc_group.add_argument('--invert', action='store_true', help='Multiply images by -1 prior to masking (default = do not invert images)')
 
     proc_group = parser.add_argument_group('processing arguments')

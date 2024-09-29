@@ -1,4 +1,5 @@
 import logging
+import random
 from datetime import datetime
 from pony3d import __version__
 
@@ -23,15 +24,17 @@ def initialize_logging():
     return logger
 
 def hello():
-    """
-    Print and log the welcome message, including the current version number.
-    """
-    logging.info('                       .oPYo.   .oPYo.   odYo.   o    o        ')
-    logging.info("                       8    8   8    8   8' `8   8    8        ")
-    logging.info('                       8    8   8    8   8   8   8    8        ')
-    logging.info("                       8YooP'   `YooP'   8   8   `YooP8        ")
-    logging.info('                       8                              8        ')
-    logging.info(f"                       8                           ooP'   v{__version__} ")
+    logging.info(f'                                                 .d8888b.       888     ')
+    logging.info(f'                                                d88P  Y88b      888     ')
+    logging.info(f'                                                     .d88P      888     ')
+    logging.info(f'            88888b.   .d88b.  88888b.  888  888     8888"   .d88888     ')
+    logging.info(f'            888 "88b d88""88b 888 "88b 888  888      "Y8b. d88" 888     ')
+    logging.info(f'            888  888 888  888 888  888 888  888 888    888 888  888     ')
+    logging.info(f'            888 d88P Y88..88P 888  888 Y88b 888 Y88b  d88P Y88b 888     ')
+    logging.info(f'            88888P"   "Y88P"  888  888  "Y88888  "Y8888P"   "Y88888     ')
+    logging.info(f'            888                             888                         ')
+    logging.info(f'            888                        Y8b d88P                         ')
+    logging.info(f'            888                         "Y88P"         v{__version__}   ')
 
 def spacer():
     """

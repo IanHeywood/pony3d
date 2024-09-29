@@ -90,7 +90,7 @@ def main():
 
     saveaverage = args.saveaverage
     savenoise = args.savenoise
-    opdir = args.opdir or f'pony3d.output.{timestamp}'
+    opdir = args.opdir or f'pony3d_output_{timestamp}'
     masktag = args.masktag
     noisetag = args.noisetag
     averagetag = args.averagetag

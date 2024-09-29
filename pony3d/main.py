@@ -256,8 +256,8 @@ def main():
                 dec = fp[2]
                 f_com = fp[5]
                 z_com = fp[6]
-                f0 = round(fp[3],3)
-                f1 = round(fp[4],3)
+                f0 = round(float(fp[3]),3)
+                f1 = round(float(fp[4]),3)
                 f.write(f'{src_id:<25}{ra:<12}{dec:<12}{f_com:<12}{z_com:<12}{f0:<12}{f1:<12}\n')
                 # f.write(f'{fp[0].split("/")[-1]:<25}{fp[1]:<12}{fp[2]:<12}{fp[5]:<12}{fp[6]:<12}{fp[3]:<12}{fp[4]:<12}\n')
             f.close()

@@ -21,6 +21,8 @@ setup(
         'scipy',
         'astropy',
         'regions',
+        'opencv-python',
+        'matplotlib',
     ],
     entry_points={
         'console_scripts': [

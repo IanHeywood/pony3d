@@ -57,8 +57,8 @@ def apply_region_mask(image_data, wcs, region_file):
     image_data (ndarray): Image data with the region applied as a mask (masked areas are set to np.nan).
     """
 
-    regs = Regions.read(region_file, format='ds9')
-    mask = np.zeros_like(image_data, dtype='int')
+    regs = Regions.read(region_file) #, format='ds9')
+    mask = np.zeros_like(image_data) #, dtype='int')
 
     if wcs.naxis > 2:
         wcs = wcs.sub([1,2])
@@ -71,7 +71,7 @@ def apply_region_mask(image_data, wcs, region_file):
 
     mask = np.array(mask,dtype='bool')
     image_data[mask] = np.nan
-    return image_data,mask
+    return image_data
 
 
 def get_mask_and_noise(input_image, threshold, boxsize, trim):
@@ -212,7 +212,7 @@ def make_averaged_mask(input_fits_subset, threshold, boxsize, dilate, invert, tr
     if os.path.isfile(mask_fits) and not overwrite:
         logging.info(f'[{log_prefix}_{idx}] Skipping {mask_fits} (overwrite disabled)')
         return
-    logging.info(f'[{log_prefix}_{idx}] Reading subset')
+    logging.info(f'[{log_prefix}_{idx}] Reading input image subset')
     cube = load_cube(input_fits_subset)
     mean_image = np.nanmean(cube, axis=2)
     if invert:
@@ -258,7 +258,7 @@ def filter_mask(mask_subset, minchans, specdilate, masktag, filtertag, overwrite
     output_fits = []
     exists = []
 
-    for input_fits in mask_subset[1:-1]:
+    for input_fits in mask_subset:
         filtered_fits = input_fits.replace(masktag, filtertag)
         template_fits.append(input_fits)
         output_fits.append(filtered_fits)
@@ -268,7 +268,7 @@ def filter_mask(mask_subset, minchans, specdilate, masktag, filtertag, overwrite
         logging.info(f'[{log_prefix}_{idx}] Subset is complete, skipping (overwrite disabled)')
         return
 
-    logging.info(f'[{log_prefix}_{idx}] Reading subset')
+    logging.info(f'[{log_prefix}_{idx}] Reading mask subset')
     cube = load_cube(mask_subset) != 0
     cube = cube.astype(bool)
 
@@ -358,7 +358,7 @@ def extract_islands(image_subset, mask_subset, opdir, catalogue, subcubes, padsp
     output_fits = []
     exists = []
 
-    logging.info(f'[{log_prefix}_{idx}] Reading mask subset')
+    logging.info(f'[{log_prefix}_{idx}] Reading filtered mask subset')
     cube = load_cube(mask_subset) 
     cube = cube.astype(bool)
 
@@ -411,13 +411,38 @@ def extract_islands(image_subset, mask_subset, opdir, catalogue, subcubes, padsp
     if subcubes:
         logging.info(f'[{log_prefix}_{idx}] Reading input image subset')
         data_cube = load_cube(image_subset) != 0
+        nchan = len(image_subset)
 
         for src in range(0,len(src_ids)):
             src_id = src_ids[src]
             logging.info(f'[{log_prefix}_{idx}] Writing subcube for {src_id}')
-            bbox = bounding_boxes[src_id]
+            bbox = bounding_boxes[src]
             centre_index = tuple((s.start + s.stop - 1) // 2 for s in bbox)
             ra, dec, xxx = wcs.pixel_to_world_values(centre_index[1],centre_index[0],0)
+            ch0 = np.max((0,bbox[2].start))
+            ch1 = np.min((bbox[2].stop,nchan))
+            ch_mid = (ch0 + ch1 - 1) // 2
+
+            # Apply padding to bounding boxes if requested
+            if padspatial != 0 and padspatial != 0:
+                expanded_bbox = []
+                for i, s in enumerate(bbox):
+                    if i in (0, 1): 
+                        expand = padspatial
+                    elif i == 2: 
+                        expand = padspectral
+                    new_start = max(0, s.start - expand)  # Ensure start is not negative
+                    new_stop = s.stop + expand
+                    new_stop = min(new_stop, data_cube.shape[i])
+                    expanded_bbox.append(slice(new_start, new_stop))
+            else:
+                expanded_bbox = bbox
+            
+            print(bbox,expanded_bbox)
+   
+            dummy_img, header = get_image(image_subset[ch_mid])
+            print(header)
+            subcube_fits = os.path.join(opdir, cubetag, f'{src_id}.fits')
 
 
 

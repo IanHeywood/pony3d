@@ -2,3 +2,5 @@ astropy
 numpy
 scipy
 regions
+opencv-python
+matplotlib

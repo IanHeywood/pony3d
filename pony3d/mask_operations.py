@@ -44,30 +44,29 @@ def format_ra_dec(ra,dec,sep=':'):
     return ra_hms,dec_dms,src_id
 
 
-def apply_region_mask(image_data, header, region_file):
+def apply_region_mask(image_data, wcs, region_file):
     """
     Apply a DS9/CARTA region mask to a FITS image.
     
     Parameters:
     image_data (str): 2D numpy array containing the image data.
-    header (???): FITS header corresponding to the image data.
+    WCS (???): WCS from header corresponding to the image data.
     region_file (str): Path to the DS9/CARTA region file.
 
     Returns:
-    masked_image (ndarray): Image data with the region applied as a mask (masked areas are set to np.nan).
+    image_data (ndarray): Image data with the region applied as a mask (masked areas are set to np.nan).
     """
 
-    wcs = WCS(header)
     regions = Regions.read(region_file, format='ds9')
-    mask = np.ones_like(image_data, dtype=bool)
-    
-    for region in regions:
-        pixel_region = region.to_pixel(wcs)
-        region_mask = pixel_region.to_mask().to_image(image_data.shape)
-        mask &= np.isnan(region_mask)  
+    mask = np.zeros_like(image_data, dtype=bool)
 
-    masked_image = np.where(mask, image_data, np.nan)
-    return masked_image
+    for region in regions:
+        if hasattr(reg, 'to_pixel'):
+            reg = reg.to_pixel(wcs)
+        mask += reg.to_mask().to_image(mask.shape)
+
+    image_data[mask] = np.nan
+    return image_data
 
 
 def get_mask_and_noise(input_image, threshold, boxsize, trim):
@@ -160,8 +159,9 @@ def make_mask(input_fits, threshold, boxsize, dilate, trim, regionmask, invert, 
         logging.info(f'[{log_prefix}_{idx}] Inverting {input_fits}')
         input_image *= -1.0
     if regionmask != '':
-        logging.info(f'[{log_prefix}_{idx}] Masking region(s) {regionmask}')
-        input_image = apply_region_mask(input_image, header, regionmask)
+        wcs = WCS(header)
+        logging.info(f'[{log_prefix}_{idx}] Applying region file mask: {regionmask}')
+        input_image = apply_region_mask(input_image, wcs, regionmask)
 
     logging.info(f'[{log_prefix}_{idx}] Finding islands')
     mask_image, noise_image = get_mask_and_noise(input_image, threshold, boxsize, trim)
@@ -214,8 +214,9 @@ def make_averaged_mask(input_fits_subset, threshold, boxsize, dilate, invert, tr
         logging.info(f'[{log_prefix}_{idx}] Inverting averaged image')
         mean_image *= -1.0
     if regionmask != '':
-        logging.info(f'[{log_prefix}_{idx}] Masking region(s) {regionmask}')
-        mean_image = apply_region_mask(mean_image, header, regionmask)
+        logging.info(f'[{log_prefix}_{idx}] Applying region file mask: {regionmask}')
+        wcs = WCS(header)
+        mean_image = apply_region_mask(mean_image, wcs, regionmask)
     logging.info(f'[{log_prefix}_{idx}] Finding islands')
     mask_image, noise_image = get_mask_and_noise(mean_image, threshold, boxsize, dilate, trim)
     if dilate > 0:

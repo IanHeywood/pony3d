@@ -267,11 +267,11 @@ def main():
 
     # Report timing
 
-    t_total = round((time.time() - t0),1)
-    t_extract = round((t_extract - t_count),1)
-    t_count = round((t_count - t_filter),1)
-    t_filter = round((t_filter - t_proc),1)
-    t_proc = round((t_proc - t0),1)
+    t_total = round((time.time() - t0),2)
+    t_extract = round((t_extract - t_count),2)
+    t_count = round((t_count - t_filter),2)
+    t_filter = round((t_filter - t_proc),2)
+    t_proc = round((t_proc - t0),2)
 
     spacer()
 

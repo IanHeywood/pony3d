@@ -57,16 +57,21 @@ def apply_region_mask(image_data, wcs, region_file):
     image_data (ndarray): Image data with the region applied as a mask (masked areas are set to np.nan).
     """
 
-    regions = Regions.read(region_file, format='ds9')
-    mask = np.zeros_like(image_data, dtype=bool)
+    regs = Regions.read(region_file, format='ds9')
+    mask = np.zeros_like(image_data, dtype='int')
 
-    for region in regions:
+    if wcs.naxis > 2:
+        wcs = wcs.sub([1,2])
+
+    for reg in regs:
+        print(reg)
         if hasattr(reg, 'to_pixel'):
             reg = reg.to_pixel(wcs)
-        mask += reg.to_mask().to_image(mask.shape)
+            mask += reg.to_mask().to_image(mask.shape)
 
+    mask = np.array(mask,dtype='bool')
     image_data[mask] = np.nan
-    return image_data
+    return image_data,mask
 
 
 def get_mask_and_noise(input_image, threshold, boxsize, trim):
@@ -160,7 +165,7 @@ def make_mask(input_fits, threshold, boxsize, dilate, trim, regionmask, invert, 
         input_image *= -1.0
     if regionmask != '':
         wcs = WCS(header)
-        logging.info(f'[{log_prefix}_{idx}] Applying region file mask: {regionmask}')
+        logging.info(f'[{log_prefix}_{idx}] Applying region file mask {regionmask}')
         input_image = apply_region_mask(input_image, wcs, regionmask)
 
     logging.info(f'[{log_prefix}_{idx}] Finding islands')
@@ -214,7 +219,7 @@ def make_averaged_mask(input_fits_subset, threshold, boxsize, dilate, invert, tr
         logging.info(f'[{log_prefix}_{idx}] Inverting averaged image')
         mean_image *= -1.0
     if regionmask != '':
-        logging.info(f'[{log_prefix}_{idx}] Applying region file mask: {regionmask}')
+        logging.info(f'[{log_prefix}_{idx}] Applying region file mask {regionmask}')
         wcs = WCS(header)
         mean_image = apply_region_mask(mean_image, wcs, regionmask)
     logging.info(f'[{log_prefix}_{idx}] Finding islands')
@@ -267,7 +272,7 @@ def filter_mask(mask_subset, minchans, specdilate, masktag, filtertag, overwrite
     cube = load_cube(mask_subset) != 0
     cube = cube.astype(bool)
 
-    # Remove islands smaller than minchans along spectral axis
+    # Filter out islands that span fewer than minchans channels
     if minchans > 0:
         logging.info(f'[{log_prefix}_{idx}] Removing islands with fewer than {minchans} contiguous channels')
         labeled_cube, n_islands = label(cube)
@@ -278,16 +283,9 @@ def filter_mask(mask_subset, minchans, specdilate, masktag, filtertag, overwrite
         counts = np.bincount(linear_indices, minlength=(n_islands + 1) * cube.shape[2])
         counts = counts.reshape(n_islands + 1, cube.shape[2])
     
-    # Check the count of unique elements along the specified axis
         unique_counts = np.sum(counts > 0, axis=1)
-
-    # Identify small islands that need to be removed
         small_islands = np.where(unique_counts < minchans)[0]
-
-    # Create a mask for the small islands
         mask = np.isin(labeled_cube, small_islands)
-
-    # Remove small islands in a vectorized manner
         cube[mask] = False
 
     # Dilate along spectral axis

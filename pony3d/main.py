@@ -66,7 +66,7 @@ def main():
     parallel_group = parser.add_argument_group('parallelism arguments')
     parallel_group.add_argument('--j', '-j', type=int, default=24, metavar='', help='Number of worker processes (default = 24)')
     parallel_group.add_argument('--chanchunk', type=int, default=128, metavar='', help='Number of channels to load per worker when processing islands (default = 128)')
-    parallel_group.add_argument('--procoverlap', type=int, default=-1, metavar = '', help='Number of overlapping channels between chunks (default = 2 x minchans)')
+    parallel_group.add_argument('--overlap', type=int, default=-1, metavar = '', help='Number of overlapping channels between chunks (default = 2 x minchans)')
 
     parser.add_argument('input_pattern', help='Pattern for the sequence of FITS files to process')
 

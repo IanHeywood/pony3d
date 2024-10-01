@@ -114,7 +114,7 @@ def main():
     # Input pattern for FITS files
     input_pattern = args.input_pattern
 
-    pool = Pool(processes=jfind)
+    pool = Pool(processes=j)
 #   semaphore = multiprocessing.Semaphore(maxwrites)
 
     fits_list = natural_sort(glob.glob(f'*{input_pattern}*'))

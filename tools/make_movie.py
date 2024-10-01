@@ -8,12 +8,13 @@ import glob
 import matplotlib.pyplot as plt
 import numpy as np
 import os
+import sys
 from astropy.io import fits
 from multiprocessing import Pool
 from PIL import Image, ImageDraw, ImageFont
 
 
-def render_png(fits_image_path, mask_fits_path, pixmin, pixmax, png_name, ccol, pixel_size=(2048, 2048), dpi=300):
+def render_png(fits_image_path, mask_fits_path, pixmin, pixmax, png_name, ccol, inch_size=(7,7), dpi=300):
     """
     Saves a FITS image (bitmap) with a Boolean mask overlay (contours)
     
@@ -21,12 +22,12 @@ def render_png(fits_image_path, mask_fits_path, pixmin, pixmax, png_name, ccol, 
     fits_image_path (str): Path to the FITS image file.
     mask_fits_path (str): Path to the FITS file containing the Boolean mask.
     png_name (str): Path to save the output PNG file.
-    pixel_size (tuple): Size of the output image in pixels (width, height).
-    dpi (int): Dots per inch (default 100).
+    inch_size (tuple): Size of the output image in inches (width, height).
+    dpi (int): Dots per inch (default 300).
     
     The FITS image and the mask should have the same dimensions.
     """
-    inch_size = (pixel_size[0] / dpi, pixel_size[1] / dpi) 
+
     with fits.open(fits_image_path) as hdul:
         data = hdul[0].data
         hdr = hdul[0].header
@@ -40,7 +41,9 @@ def render_png(fits_image_path, mask_fits_path, pixmin, pixmax, png_name, ccol, 
             mask = mask[0]   
         mask = mask.astype(bool)    
         if data.shape != mask.shape:
-            raise ValueError("FITS image and mask dimensions do not match")    
+            print("FITS image and mask dimensions do not match")
+            sys.exit()
+
     fig, ax = plt.subplots(figsize=inch_size)    
     fig.patch.set_facecolor('black')  
     ax.set_facecolor('black') 
@@ -93,8 +96,56 @@ def annotate_png(png_name, fits_name, freq, i, nframes, nolabel, fontpath, fonts
 
 def process_frame(i, datafits, maskfits, output_png, nframes, pixmin, pixmax, ccol, fontpath, fontsize, nolabel):
     print(f'Processing: {datafits} {maskfits}')
-    freq = render_png(datafits, maskfits, pixmin, pixmax, output_png, ccol, pixel_size=(2048, 2048), dpi=300)
+    freq = render_png(datafits, maskfits, pixmin, pixmax, output_png, ccol, inch_size=(7,7), dpi=300)
     annotate_png(output_png, datafits, freq, i, nframes, nolabel, fontpath, fontsize,)
+
+
+def get_png_size(png_file):
+    """
+    Parameters:
+    - png_file (str): input png
+
+    Returns:
+    - height (int): height of png
+    - width (int): width of png
+    """
+    img = cv2.imread(png_file)
+    height, width, layers = img.shape
+    return height,width
+
+
+def make_cv2_video(png_list, outfile, fps):
+    """
+    Parameters:
+    - png_list: List of paths to PNG image files.
+    - output_video_path: Path where the output video (MP4) will be saved.
+    - fps: Frames per second for the output video.
+    
+    Returns:
+    - None
+    """
+
+    if not png_list:
+        print("PNG list is empty")
+        sys.exit()
+
+    height, width = get_png_size(png_list[0])
+    
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # Codec for .mp4 video
+    video_writer = cv2.VideoWriter(outfile, fourcc, fps, (width, height))
+    
+    for png in png_list:
+        frame = cv2.imread(png)
+        if frame is None:
+            print(f"Problem reading {png}, skipping")
+            continue
+        
+        if frame.shape[:2] != (height, width):
+            print(f'Resizing {png} to {width}x{height}')
+            frame = cv2.resize(frame, (width, height))
+        
+        video_writer.write(frame)  
+    video_writer.release() 
 
 
 
@@ -108,13 +159,14 @@ def main():
     parser.add_argument('--pixmin', type=float, default=-0.005, metavar='', help='Minimum pixel value for rendering images in map units')
     parser.add_argument('--pixmax', type=float, default=0.008, metavar='', help='Maximum pixel value for rendering images in map units')
     parser.add_argument('--ccol', type=str, default='cyan', metavar='', help='Contour colour (default = cyan)')
-    parser.add_argument('--fontpath', type=str, default='', metavar='', help='Font (default = /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf)')
+    parser.add_argument('--fontpath', type=str, default='/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf', metavar='', help='Font (default = /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf)')
     parser.add_argument('--fontsize', type=int, default='18', metavar='', help='Font size (default = 18)')
     parser.add_argument('--nolabel', default=False, action='store_true', help='Do not add annotations')
-    parser.add_argument('--framesize', type=str, default=2048, metavar='', help='Movie size (square aspect only; default = 2048)')
-    parser.add_argument('--fps', type=int, default=10, metavar='', help='Frames per second (default = 10)')
-    parser.add_argument('--renderer', type=str, default='opencv', help='Select either "opencv" or "ffmpeg" to render movie, latter must be in path (default = opencv)')
-    parser.add_argument('--j', '-j', type=int, default=32, metavar='', help='Number of parallel processes to use when rendering images')
+    parser.add_argument('--fps', type=int, default=12, metavar='', help='Frames per second (default = 10)')
+    parser.add_argument('--renderer', type=str, default='opencv', metavar='', help='Select either "opencv" or "ffmpeg" to render movie, latter must be in path (default = opencv)')
+    parser.add_argument('--nomovie', default=False, action='store_true', help='Do not create movie file (default = create movie)')
+    parser.add_argument('--nopngs', default=False, action='store_true', help='Do not create PNG files (e.g. for remaking movie from existing set; default = create PNGs)')
+    parser.add_argument('--j', '-j', type=int, default=32, metavar='', help='Number of parallel processes to use when rendering images (default = 32)')
 
     args = parser.parse_args()
 
@@ -130,10 +182,19 @@ def main():
     framesize = args.fps
     fps = args.fps
     renderer = args.renderer
+    nomovie = args.nomovie
+    nopngs = args.nopngs
     j = args.j
 
+    if nopngs and nomovie:
+        print('Nothing to do here')
+        sys.exit()
 
-    f_list = sorted(glob.glob(imagepath+'/*.fits'))[1:-1]
+    if outfile == '':
+        print("Please specify an output filename")
+        sys.exit()
+
+    f_list = sorted(glob.glob(imagepath+'/*.fits'))
     m_list = sorted(glob.glob(maskpath+'/*.fits'))
     if len(m_list) == 0:
         plotmasks = False
@@ -142,7 +203,8 @@ def main():
 
     nfits = len(f_list)
     if nfits != len(m_list):
-        raise ValueError("Data FITS list and mask FITS list must be of the same length!")
+        print("Data FITS list and mask FITS list must be of the same length")
+        sys.exit()
 
     opdir = outfile+'_frames'
     if not os.path.isdir(opdir):
@@ -150,39 +212,38 @@ def main():
 
     if fontpath == '':
         print('No font specified, using Pillow default, which may be unreadable.')
+    elif not os.path.isfile(fontpath):
+        print('Specified font not found, please check')
+        sys.exit()
 
-    tasks = []
-    for i in range(nfits):
-        datafits = f_list[i]
-        if plotmasks:
-            maskfits = m_list[i]
-        else:
-            maskfits = ''
-        output_png = maskfits.split('/')[-1].replace('.fits','_'+str(i).zfill(5)+'.png')
-        output_png = os.path.join(opdir,output_png)
-        tasks.append((i, datafits, maskfits, output_png, nfits, pixmin, pixmax, ccol, fontpath, fontsize, nolabel))
+    if not nopngs:
+        tasks = []
+        for i in range(nfits):
+            datafits = f_list[i]
+            if plotmasks:
+                maskfits = m_list[i]
+            else:
+                maskfits = ''
+            output_png = maskfits.split('/')[-1].replace('.fits','_'+str(i).zfill(5)+'.png')
+            output_png = os.path.join(opdir,output_png)
+            tasks.append((i, datafits, maskfits, output_png, nfits, pixmin, pixmax, ccol, fontpath, fontsize, nolabel))
 
-    pool = Pool(processes=j)
-    pool.starmap(process_frame, tasks)
+        # Render pngs
+        pool = Pool(processes=j)
+        pool.starmap(process_frame, tasks)
 
-
-    image_files = sorted(glob.glob(f'{opdir}/*png'))
-    print(f'Using {renderer} to write {outfile}')
-    if renderer == 'opencv':
-        frame = cv2.imread(image_files[0])
-        height = framesize
-        width = framesize
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        video_writer = cv2.VideoWriter(outfile, fourcc, fps, (width, height))
-        for image_file in image_files:
-            frame = cv2.imread(image_file)
-            video_writer.write(frame)
-        video_writer.release()
-    elif renderer == 'ffmpeg':
-        frame = f'{framesize}x{framesize}'
-        ff_images = maskfits.split('/')[-1].replace('.fits','_%05d.png')
-        ff_images = os.path.join(opdir,ff_images)
-        os.system('ffmpeg -r '+str(fps)+' -f image2 -s '+frame+' -i pic_%04d.png -vcodec libx264 -crf 25 -pix_fmt yuv420p '+outfile)
+    if not nomovie:
+        # Make movie
+        png_list = sorted(glob.glob(f'{opdir}/*png'))
+        print(f'Using {renderer} to write {outfile}')
+        if renderer == 'opencv':
+            make_cv2_video(png_list, outfile, fps)
+        elif renderer == 'ffmpeg':
+            height, width = get_png_size(png_list[0])
+            frame = f'{width}x{height}'
+            ff_images = maskfits.split('/')[-1].replace('.fits','_%05d.png')
+            ff_images = os.path.join(opdir,ff_images)
+            os.system(f'ffmpeg -r {fps} -f image2 -s {frame} -i {ff_images} -vcodec libx264 -crf 25 -pix_fmt yuv420p {outfile}')
 
 
 if __name__ == '__main__':

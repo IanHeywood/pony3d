@@ -36,7 +36,7 @@ def main():
     preproc_group = parser.add_argument_group('image pre-processing arguments')
     preproc_group.add_argument('--trim', type=int, default=0, metavar='', help='Trim this number of pixels from any NaN boundaries to avoid noisy edges (default = 0)')
     preproc_group.add_argument('--regionmask', default='', metavar='', help='Provide a region file that defines areas to exclude from the subsequent processing')
-    preproc_group.add_argument('--invert', action='store_true', help='Multiply images by -1 prior to masking (default = do not invert images)')
+    preproc_group.add_argument('--invert', action='store_true', help='Multiply images by -1 prior to processing (default = do not invert images)')
 
     proc_group = parser.add_argument_group('processing arguments')
     proc_group.add_argument('--minchans', type=int, default=3, metavar='', help='Minimum number of contiguous channels that an island must have to be retained (must be less than chanchunk-2; default = 3)')
@@ -47,8 +47,8 @@ def main():
     extraction_group = parser.add_argument_group('island extraction arguments')
     extraction_group.add_argument('--catalogue', default=False, action = 'store_true', help='Write out the 3D locations of each island (default = do not write catalogue)')
     extraction_group.add_argument('--subcubes', default=False, action = 'store_true', help='Produce 3D FITS sub-cubes for each island (default = do not generate subcubes)')
-    extraction_group.add_argument('--padspatial', default=50, metavar='', help='Pad the subcube spatial dimensions around each island with this number of pixels (default = 50)')
-    extraction_group.add_argument('--padspectral', default=10, metavar='', help='Pad the subcube spectral dimensions around each island with this number of channels (default = 10)')
+    extraction_group.add_argument('--padspatial', type=int, default=50, metavar='', help='Pad the subcube spatial dimensions around each island with this number of pixels (default = 50)')
+    extraction_group.add_argument('--padspectral', type=int, default=10, metavar='', help='Pad the subcube spectral dimensions around each island with this number of channels (default = 10)')
 
     output_group = parser.add_argument_group('output arguments')
     output_group.add_argument('--saveaverage', action='store_true', help='Save the boxcar-averaged images (default = do not save)')
@@ -115,9 +115,6 @@ def main():
     pool = Pool(processes=j)
 #   semaphore = multiprocessing.Semaphore(maxwrites)
 
-    # Create directories
-    create_directories(opdir, masktag, noisetag, averagetag, filtertag, cubetag, savenoise, saveaverage, catalogue, subcubes)
-  
     fits_list = natural_sort(glob.glob(f'*{input_pattern}*'))
     if not fits_list:
         logger.error('The specified pattern returns no files')
@@ -129,6 +126,10 @@ def main():
 
     nchunks = nfits // chanchunk
 
+
+    # Create directories
+    create_directories(opdir, masktag, noisetag, averagetag, filtertag, cubetag, savenoise, saveaverage, catalogue, subcubes)
+  
 
     # Report options for log
     logger.info(f'Detection threshold .................. : {threshold}')

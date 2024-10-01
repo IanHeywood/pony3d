@@ -16,6 +16,7 @@ from regions import Regions
 from scipy.ndimage import binary_dilation, binary_erosion, convolve, minimum_filter
 from scipy.ndimage import find_objects, center_of_mass, label, binary_fill_holes
 from pony3d.file_operations import get_image, flush_image, load_cube
+from pony3d import __version__
 
 
 def get_tdl():
@@ -37,8 +38,8 @@ def format_ra_dec(ra,dec,sep=':'):
     """
 
     coord = SkyCoord(ra=ra*u.deg, dec=dec*u.deg, frame='icrs')
-    ra_hms = str(coord.ra.to_string(unit=u.hour, sep=':', precision=1, pad= True))
-    dec_dms = str(coord.dec.to_string(unit=u.deg, sep=':', precision=2, alwayssign=True, pad=True))
+    ra_hms = str(coord.ra.to_string(unit=u.hour, sep=':', precision=2, pad= True))
+    dec_dms = str(coord.dec.to_string(unit=u.deg, sep=':', precision=1, alwayssign=True, pad=True))
 #    src_id = f'J{ra_hms.split(".")[0].replace(":","")}{dec_dms.split(".")[0].replace(":","")}'
     src_id = f'J{ra_hms.replace(":","")}{dec_dms.replace(":","")}'
     return ra_hms,dec_dms,src_id
@@ -64,7 +65,6 @@ def apply_region_mask(image_data, wcs, region_file):
         wcs = wcs.sub([1,2])
 
     for reg in regs:
-        print(reg)
         if hasattr(reg, 'to_pixel'):
             reg = reg.to_pixel(wcs)
             mask += reg.to_mask().to_image(mask.shape)
@@ -77,12 +77,13 @@ def apply_region_mask(image_data, wcs, region_file):
 def get_mask_and_noise(input_image, threshold, boxsize, trim):
     """
     Generate a mask and noise image from the input image.
+    Kentoc'h mervel eget bezan saotret
 
     Args:
     input_image (np.array): 2D input image array.
     threshold (float): Sigma threshold for masking.
     boxsize (int): Box size for background noise estimation.
-    dilate (int): Number of dilation iterations.
+    trim (int): Number of erosion iterations to deal with wacky mosaick edges.
 
     Returns:
     tuple: Boolean mask array and noise estimation array.
@@ -99,7 +100,7 @@ def get_mask_and_noise(input_image, threshold, boxsize, trim):
     noise_image[noise_image < median_noise] = median_noise
     mask_image = input_image > threshold * noise_image
 
-    # Erosion iterations method 
+    # Erosion iterations trim method 
     if trim > 0:
         trim_mask = ~np.isnan(input_image)
         trim_mask = binary_erosion(trim_mask, iterations = trim)
@@ -141,6 +142,9 @@ def make_mask(input_fits, threshold, boxsize, dilate, trim, regionmask, invert, 
     input_fits (str): Path to the input FITS file.
     threshold (float): Sigma threshold for masking.
     boxsize (int): Box size for background noise estimation.
+    dilate (int): Binary dilation iterations in the spatial dimensions
+    trim (int): Binary erosion iterations to deal with noisy borders
+    regionmask: Region file defining exclusion zones
     invert (bool): Whether to invert the image.
     opdir (str): Output directory.
     masktag (str): Tag for mask files.
@@ -301,7 +305,7 @@ def filter_mask(mask_subset, minchans, specdilate, masktag, filtertag, overwrite
         else:
             logging.info(f'[{log_prefix}_{idx}] Writing {filtered_fits}')
             template_image, header = get_image(template_fits[i])
-            flush_image(cube[:, :, i + 1], header, filtered_fits)
+            flush_image(cube[:, :, i], header, filtered_fits)
 
     del labeled_cube
     del cube
@@ -402,15 +406,13 @@ def extract_islands(image_subset, mask_subset, opdir, catalogue, subcubes, padsp
                 fname = f'{opdir}/cat_temp/{src_id}{tdl}{ra}{tdl}{dec}{tdl}{f0}{tdl}{f1}{tdl}{f_com}{tdl}{z_com}{tdl}{com_fits}'
                 f = open(fname,'w')
                 f.close()
-#                fp = fname.split(tdl)
-#                print(f'{fp[0]:<25}{ra:<12}{dec:<12}{f_com:<12}{z_com:<12}\n')
 
     del labeled_cube
     gc.collect()
 
     if subcubes:
         logging.info(f'[{log_prefix}_{idx}] Reading input image subset')
-        data_cube = load_cube(image_subset) != 0
+        data_cube = load_cube(image_subset)
         nchan = len(image_subset)
 
         for src in range(0,len(src_ids)):
@@ -423,8 +425,10 @@ def extract_islands(image_subset, mask_subset, opdir, catalogue, subcubes, padsp
             ch1 = np.min((bbox[2].stop,nchan))
             ch_mid = (ch0 + ch1 - 1) // 2
 
+            sub_f0 = freq0 + (ch0*df)
+
             # Apply padding to bounding boxes if requested
-            if padspatial != 0 and padspatial != 0:
+            if padspatial != 0 or padspectral != 0:
                 expanded_bbox = []
                 for i, s in enumerate(bbox):
                     if i in (0, 1): 
@@ -437,14 +441,33 @@ def extract_islands(image_subset, mask_subset, opdir, catalogue, subcubes, padsp
                     expanded_bbox.append(slice(new_start, new_stop))
             else:
                 expanded_bbox = bbox
-            
-            print(bbox,expanded_bbox)
-   
+            expanded_bbox = tuple(expanded_bbox)
+            sub_cube_data = data_cube[expanded_bbox]
+            sub_cube_data = np.transpose(sub_cube_data, (2, 1, 0)) # because why?
+
+            # labeled_sub_cube_data = labeled_cube[expanded_bbox]
+            # labeled_sub_cube_data = np.transpose(labeled_sub_cube_data, (2, 1, 0))
+
             dummy_img, header = get_image(image_subset[ch_mid])
-            print(header)
-            subcube_fits = os.path.join(opdir, cubetag, f'{src_id}.fits')
 
+            # Sort out cube headers
+            if 'CASAMBM' in header:
+                header.remove('CASAMBM')
+            header.remove('COMMENT', remove_all=True)
+            header['CRVAL1'] = float(ra)  # RA reference value
+            header['CRPIX1'] = int(centre_index[1] - bbox[1].start)  # Adjust RA reference pixel
+            header['CRVAL2'] = float(dec)  # Dec reference value
+            header['CRPIX2'] = int(centre_index[0] - bbox[0].start)  # Adjust Dec reference pixel
+            header['CRVAL3'] = float(sub_f0)
+            header['CRPIX3'] = 1 
+            header['COMMENT'] = f'{src_id}'
+            header['COMMENT'] = f'pony3d-{__version__}'
+     
+            subcube_fits_file = os.path.join(opdir, cubetag, f'pony3d_{src_id}_subcube.fits')
+            # labeled_subcube_fits_file = os.path.join(opdir, cubetag, f'pony3d_{src_id}_subcube_label.fits')
 
+            flush_image(sub_cube_data, header, subcube_fits_file)
+            # flush_image(labeled_sub_cube_data, header, labeled_subcube_fits_file)
 
 
 

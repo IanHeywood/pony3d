@@ -46,7 +46,8 @@ def main():
 
     extraction_group = parser.add_argument_group('island extraction arguments')
     extraction_group.add_argument('--catalogue', default=False, action = 'store_true', help='Write out the 3D locations of each island (default = do not write catalogue)')
-    extraction_group.add_argument('--subcubes', default=False, action = 'store_true', help='Produce 3D FITS sub-cubes for each island (default = do not generate subcubes)')
+    extraction_group.add_argument('--subcubes', default=False, action = 'store_true', help='Produce 3D FITS sub-cubes from the data for each island (default = do not produce)')
+    extraction_group.add_argument('--submasks', default=False, action = 'store_true', help='Produce 3D FITS sub-cubes of the mask for each island (increases memory footprint; default = do not produce)')
     extraction_group.add_argument('--padspatial', type=int, default=50, metavar='', help='Pad the subcube spatial dimensions around each island with this number of pixels (default = 50)')
     extraction_group.add_argument('--padspectral', type=int, default=10, metavar='', help='Pad the subcube spectral dimensions around each island with this number of channels (default = 10)')
 
@@ -65,7 +66,7 @@ def main():
     parallel_group = parser.add_argument_group('parallelism arguments')
     parallel_group.add_argument('--j', '-j', type=int, default=24, metavar='', help='Number of worker processes (default = 24)')
     parallel_group.add_argument('--chanchunk', type=int, default=128, metavar='', help='Number of channels to load per worker when processing islands (default = 128)')
-    parallel_group.add_argument('--overlap', type=int, default=-1, metavar = '', help='Number of overlapping channels between chunks (default = 2 x minchans)')
+    parallel_group.add_argument('--procoverlap', type=int, default=-1, metavar = '', help='Number of overlapping channels between chunks (default = 2 x minchans)')
 
     parser.add_argument('input_pattern', help='Pattern for the sequence of FITS files to process')
 
@@ -85,6 +86,7 @@ def main():
 
     catalogue = args.catalogue
     subcubes = args.subcubes
+    submasks = args.submasks
     padspatial = args.padspatial
     padspectral = args.padspectral
 
@@ -102,7 +104,8 @@ def main():
     if catname == '':
         catname = f'pony3.sources.{timestamp}.txt'
 
-    j = args.j
+    jfind = args.jfind
+    jproc = args.jproc
     chanchunk = args.chanchunk
     overlap = args.overlap
 
@@ -112,7 +115,7 @@ def main():
     # Input pattern for FITS files
     input_pattern = args.input_pattern
 
-    pool = Pool(processes=j)
+    pool = Pool(processes=jfind)
 #   semaphore = multiprocessing.Semaphore(maxwrites)
 
     fits_list = natural_sort(glob.glob(f'*{input_pattern}*'))
@@ -238,7 +241,7 @@ def main():
 
         iterable_params = zip(
             input_fits_subsets, mask_subsets, [opdir]*ns, [catalogue]*ns, [subcubes]*ns, 
-            [padspatial]*ns, [padspectral]*ns, [catname]*ns, [cubetag]*ns,
+            [submasks]*ns, [padspatial]*ns, [padspectral]*ns, [catname]*ns, [cubetag]*ns,
             [overwrite]*ns, np.arange(ns)
         )
         pool.starmap(extract_islands, iterable_params)

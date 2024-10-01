@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 import sys
+import tempfile
 from astropy.io import fits
 from multiprocessing import Pool
 from PIL import Image, ImageDraw, ImageFont
@@ -216,35 +217,43 @@ def main():
         print('Specified font not found, please check')
         sys.exit()
 
-    if not nopngs:
-        tasks = []
-        for i in range(nfits):
-            datafits = f_list[i]
-            if plotmasks:
-                maskfits = m_list[i]
-            else:
-                maskfits = ''
-            output_png = maskfits.split('/')[-1].replace('.fits','_'+str(i).zfill(5)+'.png')
-            output_png = os.path.join(opdir,output_png)
-            tasks.append((i, datafits, maskfits, output_png, nfits, pixmin, pixmax, ccol, fontpath, fontsize, nolabel))
+    tasks = []
+    for i in range(nfits):
+        datafits = f_list[i]
+        if plotmasks:
+            maskfits = m_list[i]
+        else:
+            maskfits = ''
+        output_png = maskfits.split('/')[-1].replace('.fits','.png')
+        output_png = os.path.join(opdir,output_png)
+        tasks.append((i, datafits, maskfits, output_png, nfits, pixmin, pixmax, ccol, fontpath, fontsize, nolabel))
 
-        # Render pngs
+    if not nopngs:
         pool = Pool(processes=j)
         pool.starmap(process_frame, tasks)
 
     if not nomovie:
         # Make movie
         png_list = sorted(glob.glob(f'{opdir}/*png'))
+        cwd = os.getcwd()
         print(f'Using {renderer} to write {outfile}')
         if renderer == 'opencv':
             make_cv2_video(png_list, outfile, fps)
         elif renderer == 'ffmpeg':
             height, width = get_png_size(png_list[0])
             frame = f'{width}x{height}'
-            ff_images = maskfits.split('/')[-1].replace('.fits','_%05d.png')
-            ff_images = os.path.join(opdir,ff_images)
-            os.system(f'ffmpeg -r {fps} -f image2 -s {frame} -i {ff_images} -vcodec libx264 -crf 25 -pix_fmt yuv420p {outfile}')
 
+            with tempfile.NamedTemporaryFile(delete=False, mode='w') as temp_file:
+                temp_name = temp_file.name
+                
+                for pp in png_list:
+                    temp_file.write(f"file '{cwd}/{pp}'\n")
+            print(f'Wrote {temp_name} for ffmpeg')
+            #syscall = f'ffmpeg -r {fps} -s {frame} -f concat -safe 0 -i {temp_name} -vcodec libx264 -crf 25 -pix_fmt yuv420p {outfile}'
+            syscall = f'ffmpeg -r {fps} -f concat -safe 0 -i {temp_name} -vf "scale=trunc({width}/2)*2:trunc({height}/2)*2" -vcodec libx264 -crf 25 -pix_fmt yuv420p {outfile}'
+            print(f'ffmpeg command: {syscall}')
+            os.system(syscall)
+            os.remove(temp_name)
 
 if __name__ == '__main__':
 

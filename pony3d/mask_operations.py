@@ -332,7 +332,7 @@ def count_islands(input_fits, orig_fits, idx):
     logging.info(f'[{log_prefix}_{idx}] Channel mask parameters: {input_fits} {n_islands} {rms}')
 
 
-def extract_islands(image_subset, mask_subset, opdir, catalogue, subcubes, padspatial, padspectral, catname, cubetag, overwrite, idx):
+def extract_islands(image_subset, mask_subset, opdir, catalogue, subcubes, submasks, padspatial, padspectral, catname, cubetag, overwrite, idx):
     """
     Load a subset of channels into a cube
     Label each region
@@ -407,8 +407,9 @@ def extract_islands(image_subset, mask_subset, opdir, catalogue, subcubes, padsp
                 f = open(fname,'w')
                 f.close()
 
-    del labeled_cube
-    gc.collect()
+    if not submasks:
+        del labeled_cube
+        gc.collect()
 
     if subcubes:
         logging.info(f'[{log_prefix}_{idx}] Reading input image subset')
@@ -445,8 +446,9 @@ def extract_islands(image_subset, mask_subset, opdir, catalogue, subcubes, padsp
             sub_cube_data = data_cube[expanded_bbox]
             sub_cube_data = np.transpose(sub_cube_data, (2, 1, 0)) # because why?
 
-            # labeled_sub_cube_data = labeled_cube[expanded_bbox]
-            # labeled_sub_cube_data = np.transpose(labeled_sub_cube_data, (2, 1, 0))
+            if submasks:
+                labeled_sub_cube_data = labeled_cube[expanded_bbox]
+                labeled_sub_cube_data = np.transpose(labeled_sub_cube_data, (2, 1, 0))
 
             dummy_img, header = get_image(image_subset[ch_mid])
 
@@ -464,10 +466,11 @@ def extract_islands(image_subset, mask_subset, opdir, catalogue, subcubes, padsp
             header['COMMENT'] = f'pony3d-{__version__}'
      
             subcube_fits_file = os.path.join(opdir, cubetag, f'pony3d_{src_id}_subcube.fits')
-            # labeled_subcube_fits_file = os.path.join(opdir, cubetag, f'pony3d_{src_id}_subcube_label.fits')
-
             flush_image(sub_cube_data, header, subcube_fits_file)
-            # flush_image(labeled_sub_cube_data, header, labeled_subcube_fits_file)
+    
+            if submasks:
+                labeled_subcube_fits_file = os.path.join(opdir, cubetag, f'pony3d_{src_id}_subcube_label.fits')
+                flush_image(labeled_sub_cube_data, header, labeled_subcube_fits_file)
 
 
 

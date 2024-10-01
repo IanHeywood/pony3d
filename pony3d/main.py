@@ -104,8 +104,7 @@ def main():
     if catname == '':
         catname = f'pony3.sources.{timestamp}.txt'
 
-    jfind = args.jfind
-    jproc = args.jproc
+    j = args.j
     chanchunk = args.chanchunk
     overlap = args.overlap
 

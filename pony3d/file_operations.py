@@ -50,12 +50,14 @@ def get_image(fits_file):
     np.array: 2D image data
     image header
     """
+    print(f'Reading {fits_file}')
     with fits.open(fits_file) as hdul:
         image_data = hdul[0].data
         if len(image_data.shape) == 2: image_data = image_data[:,:]
         elif len(image_data.shape) == 3: image_data = image_data[0,:,:]
         else: image_data = image_data[0,0,:,:]
         header = hdul[0].header
+    print(f'Done with {fits_file}')
     return image_data,header
 
 
@@ -68,7 +70,9 @@ def flush_image(image_data, header, fits_file):
     image_data (np.array): 2D array of image data.
     header: FITS file header (generally copied from the corresponding input image)
     """
+    print(f'Writing {fits_file}')
     fits.writeto(fits_file, image_data.astype('float32'), header, overwrite=True)
+    print(f'Written {fits_file}')
 
 
 def load_cube(fits_list):
@@ -81,7 +85,9 @@ def load_cube(fits_list):
     Returns:
     np.array: 3D cube of image data.
     """
+    print(f'Forming cube from {fits_list}')
     temp = [get_image(fits_file)[0] for fits_file in fits_list]
+    print(f'Cube formed from {fits_list}')
     return np.dstack(temp)
 
 

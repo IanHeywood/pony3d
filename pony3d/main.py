@@ -170,6 +170,8 @@ def main():
             [savenoise]*nfits, [overwrite]*nfits, np.arange(nfits)
         )
         pool.starmap(make_mask, iterable_params)
+        pool.close()
+        pool.join()
     else:
         input_fits_subsets = [
             fits_list[i:min(i + boxcar, nfits)]
@@ -185,6 +187,8 @@ def main():
             np.arange(len(input_fits_subsets))
         )
         pool.starmap(make_averaged_mask, iterable_params)
+        pool.close()
+        pool.join()
 
     t_proc = time.time()
 
@@ -203,6 +207,8 @@ def main():
             [filtertag]*ns, [overwrite]*ns, np.arange(ns)
         )
         pool.starmap(filter_mask, iterable_params)
+        pool.close()
+        pool.join()
 
     t_filter = time.time()
 
@@ -216,6 +222,8 @@ def main():
 
     iterable_params = zip(mask_list, orig_list, np.arange(len(mask_list)))
     pool.starmap(count_islands, iterable_params)
+    pool.close()
+    pool.join()
 
     t_count = time.time()
 
@@ -244,6 +252,9 @@ def main():
             [overwrite]*ns, np.arange(ns)
         )
         pool.starmap(extract_islands, iterable_params)
+        pool.close()
+        pool.join()
+
 
         if catalogue:
             tdl = get_tdl()

@@ -9,6 +9,7 @@ import numpy as np
 import os
 import scipy.special
 import time
+import traceback
 from astropy.coordinates import SkyCoord
 from astropy import units as u
 from astropy.wcs import WCS
@@ -255,61 +256,67 @@ def filter_mask(mask_subset, minchans, specdilate, masktag, filtertag, overwrite
     overwrite (bool): Whether to overwrite existing files.
     idx (int): Index for logging.
     """
-    log_prefix = 'Filter'
-    idx = str(idx).zfill(5)
-    logging.info(f'[{log_prefix}_{idx}] Worker process {idx} operating on image subset {mask_subset[0]} -- {mask_subset[-1]}')
-    template_fits = []
-    output_fits = []
-    exists = []
-
-    for input_fits in mask_subset:
-        filtered_fits = input_fits.replace(masktag, filtertag)
-        template_fits.append(input_fits)
-        output_fits.append(filtered_fits)
-        exists.append(os.path.isfile(filtered_fits))
-
-    if all(exists) and not overwrite:
-        logging.info(f'[{log_prefix}_{idx}] Subset is complete, skipping (overwrite disabled)')
-        return
-
-    logging.info(f'[{log_prefix}_{idx}] Reading mask subset')
-    cube = load_cube(mask_subset) != 0
-    cube = cube.astype(bool)
-
-    # Filter out islands that span fewer than minchans channels
-    if minchans > 0:
-        logging.info(f'[{log_prefix}_{idx}] Removing islands with fewer than {minchans} contiguous channels')
-        labeled_cube, n_islands = label(cube)
-        island_sizes = np.zeros(n_islands + 1, dtype=int)
-        flat_indices = np.where(labeled_cube > 0)
-        flat_labels = labeled_cube[flat_indices]
-        linear_indices = flat_labels * cube.shape[2] + flat_indices[2]
-        counts = np.bincount(linear_indices, minlength=(n_islands + 1) * cube.shape[2])
-        counts = counts.reshape(n_islands + 1, cube.shape[2])
     
-        unique_counts = np.sum(counts > 0, axis=1)
-        small_islands = np.where(unique_counts < minchans)[0]
-        mask = np.isin(labeled_cube, small_islands)
-        cube[mask] = False
+    try:
 
-    # Dilate along spectral axis
-    if specdilate != 0:
-        logging.info(f'[{log_prefix}_{idx}] Dilating islands with {specdilate} iterations along spectral axis')
-        recon_struct = np.array([1,1,1])[None,None,:]
-        cube = binary_dilation(cube, structure = recon_struct)
+        log_prefix = 'Filter'
+        idx = str(idx).zfill(5)
+        logging.info(f'[{log_prefix}_{idx}] Worker process {idx} operating on image subset {mask_subset[0]} -- {mask_subset[-1]}')
+        template_fits = []
+        output_fits = []
+        exists = []
 
-    # Write out filtered images
-    for i, filtered_fits in enumerate(output_fits):
-        if exists[i] and not overwrite:
-            logging.info(f'[{log_prefix}_{idx}] Skipping {filtered_fits} (overwrite disabled)')
-        else:
-            logging.info(f'[{log_prefix}_{idx}] Writing {filtered_fits}')
-            template_image, header = get_image(template_fits[i])
-            flush_image(cube[:, :, i], header, filtered_fits)
+        for input_fits in mask_subset:
+            filtered_fits = input_fits.replace(masktag, filtertag)
+            template_fits.append(input_fits)
+            output_fits.append(filtered_fits)
+            exists.append(os.path.isfile(filtered_fits))
 
-    del labeled_cube
-    del cube
-    gc.collect()
+        if all(exists) and not overwrite:
+            logging.info(f'[{log_prefix}_{idx}] Subset is complete, skipping (overwrite disabled)')
+            return
+
+        logging.info(f'[{log_prefix}_{idx}] Reading mask subset')
+        cube = load_cube(mask_subset) != 0
+        cube = cube.astype(bool)
+
+        # Filter out islands that span fewer than minchans channels
+        if minchans > 0:
+            logging.info(f'[{log_prefix}_{idx}] Removing islands with fewer than {minchans} contiguous channels')
+            labeled_cube, n_islands = label(cube)
+            island_sizes = np.zeros(n_islands + 1, dtype=int)
+            flat_indices = np.where(labeled_cube > 0)
+            flat_labels = labeled_cube[flat_indices]
+            linear_indices = flat_labels * cube.shape[2] + flat_indices[2]
+            counts = np.bincount(linear_indices, minlength=(n_islands + 1) * cube.shape[2])
+            counts = counts.reshape(n_islands + 1, cube.shape[2])
+        
+            unique_counts = np.sum(counts > 0, axis=1)
+            small_islands = np.where(unique_counts < minchans)[0]
+            mask = np.isin(labeled_cube, small_islands)
+            cube[mask] = False
+
+        # Dilate along spectral axis
+        if specdilate != 0:
+            logging.info(f'[{log_prefix}_{idx}] Dilating islands with {specdilate} iterations along spectral axis')
+            recon_struct = np.array([1,1,1])[None,None,:]
+            cube = binary_dilation(cube, structure = recon_struct)
+
+        # Write out filtered images
+        for i, filtered_fits in enumerate(output_fits):
+            if exists[i] and not overwrite:
+                logging.info(f'[{log_prefix}_{idx}] Skipping {filtered_fits} (overwrite disabled)')
+            else:
+                logging.info(f'[{log_prefix}_{idx}] Writing {filtered_fits}')
+                template_image, header = get_image(template_fits[i])
+                flush_image(cube[:, :, i], header, filtered_fits)
+
+        del labeled_cube
+        del cube
+        gc.collect()
+
+    except:
+        traceback.print_exc()
 
 
 def count_islands(input_fits, orig_fits, idx):

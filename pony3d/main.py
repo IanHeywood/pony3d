@@ -212,6 +212,7 @@ def main():
         pool.join()
 
     t_filter = time.time()
+    pool = Pool(processes=j)
 
     # Count islands
     if minchans != 0 or specdilate != 0:

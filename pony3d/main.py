@@ -191,7 +191,8 @@ def main():
         pool.join()
 
     t_proc = time.time()
-
+    pool = Pool(processes=j)
+    
     # Filter masks
     if minchans != 0 or specdilate != 0:
         mask_list = natural_sort(glob.glob(f'{opdir}/{masktag}/*{input_pattern}*'))
@@ -226,7 +227,8 @@ def main():
     pool.join()
 
     t_count = time.time()
-
+    pool = Pool(processes=j)
+    
     # Source extraction
     if catalogue or subcubes:
         if minchans != 0 or specdilate != 0:

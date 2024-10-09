@@ -6,6 +6,8 @@ import os
 import re
 import glob
 import numpy as np
+import logging
+import traceback
 from astropy.io import fits
 
 
@@ -34,7 +36,7 @@ def create_directories(opdir, masktag, noisetag, averagetag, filtertag, cubetag,
     if not os.path.isdir(f'{opdir}/{filtertag}'):
         os.mkdir(f'{opdir}/{filtertag}')
     if catalogue and not os.path.isdir(f'{opdir}/cat_temp'):
-        os.mkdir(f'{opdir}/cat_temp')        
+        os.mkdir(f'{opdir}/cat_temp')
     if subcubes and not os.path.isdir(f'{opdir}/{cubetag}'):
         os.mkdir(f'{opdir}/{cubetag}')
 
@@ -50,15 +52,15 @@ def get_image(fits_file):
     np.array: 2D image data
     image header
     """
-    print(f'Reading {fits_file}')
+    logging.info(f'Reading {fits_file}')
     with fits.open(fits_file) as hdul:
         image_data = hdul[0].data
         if len(image_data.shape) == 2: image_data = image_data[:,:]
         elif len(image_data.shape) == 3: image_data = image_data[0,:,:]
         else: image_data = image_data[0,0,:,:]
         header = hdul[0].header
-    print(f'Done with {fits_file}')
-    return image_data,header
+    logging.info(f'Done with {fits_file}')
+    return image_data, header
 
 
 def flush_image(image_data, header, fits_file):
@@ -70,9 +72,20 @@ def flush_image(image_data, header, fits_file):
     image_data (np.array): 2D array of image data.
     header: FITS file header (generally copied from the corresponding input image)
     """
-    print(f'Writing {fits_file}')
-    fits.writeto(fits_file, image_data.astype('float32'), header, overwrite=True)
-    print(f'Written {fits_file}')
+    logging.info(f'Writing {fits_file} with data length {len(image_data)}; duplicate file? {os.path.exists(fits_file)}')
+    try:
+        hdu = fits.PrimaryHDU(image_data.astype('float32'), header)
+        hdu.verify('silentfix')
+        hdu.writeto(fits_file, overwrite=True)
+    except Exception as e:
+        logging.error(traceback.print_exception(e))
+    finally:
+        if os.path.exists(fits_file):
+            logging.info(f'Written {fits_file}')
+            return True
+        else:
+            logging.error(f'Error: FITS file NOT written {fits_file}')
+            return False
 
 
 def load_cube(fits_list):
@@ -85,9 +98,9 @@ def load_cube(fits_list):
     Returns:
     np.array: 3D cube of image data.
     """
-    print(f'Forming cube from {fits_list}')
+    logging.info(f'Forming cube from {fits_list}')
     temp = [get_image(fits_file)[0] for fits_file in fits_list]
-    print(f'Cube formed from {fits_list}')
+    logging.info(f'Cube formed from {fits_list}')
     return np.dstack(temp)
 
 
@@ -103,12 +116,12 @@ def load_cube(fits_list):
 #     """
 #     # List to hold each 3D array (1, Dec, RA) from each FITS file
 #     image_list = []
-    
+
 #     # Load each FITS file and append the data to the list
 #     for fits_file in fits_list:
 #         # Load the FITS data; assuming data shape is (Dec, RA) or (1, Dec, RA)
 #         data = fits.getdata(fits_file)
-        
+
 #         # If data is 2D (Dec, RA), expand to 3D (1, Dec, RA)
 #         if len(data.shape) == 2:
 #             data = data[np.newaxis, :, :]  # Add a new axis for the frequency dimension
@@ -122,7 +135,7 @@ def load_cube(fits_list):
 
 #     # Concatenate all 3D arrays along the frequency axis (axis=0)
 #     cube = np.concatenate(image_list, axis=0)
-    
+
 #     return cube
 
 
@@ -139,4 +152,3 @@ def natural_sort(l):
     convert = lambda text: int(text) if text.isdigit() else text.lower()
     alphanum_key = lambda key: [convert(c) for c in re.split('([0-9]+)', key)]
     return sorted(l, key=alphanum_key)
-

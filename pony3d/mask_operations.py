@@ -181,11 +181,16 @@ def make_mask(input_fits, threshold, boxsize, dilate, trim, regionmask, invert, 
         mask_image = binary_dilation(mask_image, iterations=dilate)
     
     logging.info(f'[{log_prefix}_{idx}] Writing mask image {mask_fits}')
-    flush_image(mask_image, header, mask_fits)
+    f_written = flush_image(mask_image, header, mask_fits)
+    if not f_written:
+        logging.error(f'Failed to write FITS file: [{log_prefix}_{idx}] Writing mask image {mask_fits}')
+
     if savenoise:
         noise_fits = os.path.join(opdir, noisetag, input_fits.replace('.fits', f'.{noisetag}.fits'))
         logging.info(f'[{log_prefix}_{idx}] Writing noise image {noise_fits}')
-        flush_image(noise_image, header, noise_fits)
+        f_written = flush_image(noise_image, header, noise_fits)
+        if not f_written:
+            logging.error(f'Failed to write FITS file: [{log_prefix}_{idx}] Writing noise image {noise_fits}')
 
 
 def make_averaged_mask(input_fits_subset, threshold, boxsize, dilate, invert, trim, regionmask, opdir, masktag, noisetag, savenoise, averagetag, saveaverage, overwrite, idx):
@@ -232,15 +237,23 @@ def make_averaged_mask(input_fits_subset, threshold, boxsize, dilate, invert, tr
     if dilate > 0:
         mask_image = binary_dilation(mask_image, iterations=dilate)
     logging.info(f'[{log_prefix}_{idx}] Writing mask image {mask_fits}')
-    flush_image(mask_image, header, mask_fits)
+    f_written = flush_image(mask_image, header, mask_fits)
+    if not f_written:
+        logging.error(f'Failed to write FITS file: [{log_prefix}_{idx}] Writing mask image {mask_fits}')
+
     if saveaverage:
         mean_fits = os.path.join(opdir, averagetag, input_fits.replace('.fits', f'.{averagetag}.fits'))
         logging.info(f'[{log_prefix}_{idx}] Writing averaged mask image {mean_fits}')
-        flush_image(mean_image, header, mean_fits)
+        f_written = flush_image(mean_image, header, mean_fits)
+        if not f_written:
+            logging.error(f'Failed to write FITS file: [{log_prefix}_{idx}] Writing averaged mask image {mean_fits}')
+
     if savenoise:
         noise_fits = os.path.join(opdir, noisetag, input_fits.replace('.fits', f'.{noisetag}.fits'))
         logging.info(f'[{log_prefix}_{idx}] Writing noise image {noise_fits}')
-        flush_image(noise_image, header, noise_fits)
+        f_written = flush_image(noise_image, header, noise_fits)
+        if not f_written:
+            logging.error(f'Failed to write FITS file: [{log_prefix}_{idx}] Writing noise image {noise_fits}')
 
 
 def filter_mask(mask_subset, minchans, specdilate, masktag, filtertag, overwrite, idx):
@@ -309,7 +322,9 @@ def filter_mask(mask_subset, minchans, specdilate, masktag, filtertag, overwrite
             else:
                 logging.info(f'[{log_prefix}_{idx}] Writing {filtered_fits}')
                 template_image, header = get_image(template_fits[i])
-                flush_image(cube[:, :, i], header, filtered_fits)
+                f_written = flush_image(cube[:, :, i], header, filtered_fits)
+                if not f_written:
+                    logging.error(f'Failed to write FITS file: [{log_prefix}_{idx}] Writing {filtered_fits}')
 
         del labeled_cube
         del cube
@@ -473,11 +488,15 @@ def extract_islands(image_subset, mask_subset, opdir, catalogue, subcubes, subma
             header['COMMENT'] = f'pony3d-{__version__}'
      
             subcube_fits_file = os.path.join(opdir, cubetag, f'pony3d_{src_id}_subcube.fits')
-            flush_image(sub_cube_data, header, subcube_fits_file)
+            f_written = flush_image(sub_cube_data, header, subcube_fits_file)
+            if not f_written:
+                logging.error(f'Failed to write FITS file: sub_cube_data file {subcube_fits_file}')
     
             if submasks:
                 labeled_subcube_fits_file = os.path.join(opdir, cubetag, f'pony3d_{src_id}_subcube_label.fits')
-                flush_image(labeled_sub_cube_data, header, labeled_subcube_fits_file)
+                f_written = flush_image(labeled_sub_cube_data, header, labeled_subcube_fits_file)
+                if not f_written:
+                    logging.error(f'Failed to write FITS file: labeled_sub_cube_data file {labeled_subcube_fits_file}')
 
 
 

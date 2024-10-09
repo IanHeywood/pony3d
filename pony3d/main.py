@@ -3,11 +3,11 @@
 
 
 import argparse
-import os
 import sys
 import glob
 import time
 import numpy as np
+import traceback
 from multiprocessing import Pool
 
 from pony3d.terminal_operations import initialize_logging, hello, spacer
@@ -20,7 +20,6 @@ def main():
 
     timestamp = time.strftime("%d%m%Y_%H%M%S")
     logger = initialize_logging()
-
 
     spacer()
     hello()
@@ -114,7 +113,6 @@ def main():
     # Input pattern for FITS files
     input_pattern = args.input_pattern
 
-    pool = Pool(processes=j)
 #   semaphore = multiprocessing.Semaphore(maxwrites)
 
     fits_list = natural_sort(glob.glob(f'*{input_pattern}*'))
@@ -169,9 +167,11 @@ def main():
             [invert]*nfits, [opdir]*nfits, [masktag]*nfits, [noisetag]*nfits,
             [savenoise]*nfits, [overwrite]*nfits, np.arange(nfits)
         )
-        pool.starmap(make_mask, iterable_params)
-        pool.close()
-        pool.join()
+        with Pool(processes=j) as pool:
+            try:
+                pool.starmap(make_mask, iterable_params)
+            except Exception as e:
+                logger.error(traceback.print_exception(e))
     else:
         input_fits_subsets = [
             fits_list[i:min(i + boxcar, nfits)]
@@ -186,13 +186,13 @@ def main():
             [averagetag]*ns, [saveaverage]*ns, [overwrite]*ns, 
             np.arange(len(input_fits_subsets))
         )
-        pool.starmap(make_averaged_mask, iterable_params)
-        pool.close()
-        pool.join()
+        with Pool(processes=j) as pool:
+            try:
+                pool.starmap(make_averaged_mask, iterable_params)
+            except Exception as e:
+                logger.error(traceback.print_exception(e))
 
     t_proc = time.time()
-    pool = Pool(processes=j)
-    
     # Filter masks
     if minchans != 0 or specdilate != 0:
         mask_list = natural_sort(glob.glob(f'{opdir}/{masktag}/*{input_pattern}*'))
@@ -207,13 +207,13 @@ def main():
             mask_subsets, [specdilate]*ns, [minchans]*ns, [masktag]*ns, 
             [filtertag]*ns, [overwrite]*ns, np.arange(ns)
         )
-        pool.starmap(filter_mask, iterable_params)
-        pool.close()
-        pool.join()
+        with Pool(processes=j) as pool:
+            try:
+                pool.starmap(filter_mask, iterable_params)
+            except Exception as e:
+                logger.error(traceback.print_exception(e))
 
     t_filter = time.time()
-    pool = Pool(processes=j)
-
     # Count islands
     if minchans != 0 or specdilate != 0:
         mask_list = natural_sort(glob.glob(f'{opdir}/{filtertag}/*{input_pattern}*'))
@@ -223,13 +223,13 @@ def main():
         orig_list = [mask_fits.split('/')[-1].replace(f'.{masktag}', '') for mask_fits in mask_list]
 
     iterable_params = zip(mask_list, orig_list, np.arange(len(mask_list)))
-    pool.starmap(count_islands, iterable_params)
-    pool.close()
-    pool.join()
+    with Pool(processes=j) as pool:
+        try:
+            pool.starmap(count_islands, iterable_params)
+        except Exception as e:
+            logger.error(traceback.print_exception(e))
 
     t_count = time.time()
-    pool = Pool(processes=j)
-    
     # Source extraction
     if catalogue or subcubes:
         if minchans != 0 or specdilate != 0:
@@ -254,10 +254,11 @@ def main():
             [submasks]*ns, [padspatial]*ns, [padspectral]*ns, [catname]*ns, [cubetag]*ns,
             [overwrite]*ns, np.arange(ns)
         )
-        pool.starmap(extract_islands, iterable_params)
-        pool.close()
-        pool.join()
-
+        with Pool(processes=j) as pool:
+            try:
+                pool.starmap(extract_islands, iterable_params)
+            except Exception as e:
+                logger.error(traceback.print_exception(e))
 
         if catalogue:
             tdl = get_tdl()
@@ -303,4 +304,3 @@ def main():
 if __name__ == '__main__':
 
     main()
-

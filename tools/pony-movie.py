@@ -203,7 +203,7 @@ def main():
         plotmasks = True
 
     nfits = len(f_list)
-    if nfits != len(m_list):
+    if nfits != len(m_list) and plotmasks:
         print("Data FITS list and mask FITS list must be of the same length")
         sys.exit()
 
@@ -224,7 +224,7 @@ def main():
             maskfits = m_list[i]
         else:
             maskfits = ''
-        output_png = maskfits.split('/')[-1].replace('.fits','.png')
+        output_png = datafits.split('/')[-1].replace('.fits','.png')
         output_png = os.path.join(opdir,output_png)
         tasks.append((i, datafits, maskfits, output_png, nfits, pixmin, pixmax, ccol, fontpath, fontsize, nolabel))
 

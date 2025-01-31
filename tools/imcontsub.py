@@ -61,44 +61,58 @@ def load_images(image_pattern):
     return cube, image_files  # Return file list to use as template for writing
 
 
-def load_image_chunk(image_files, chunk_idx, chunk_size, total_chunks):
+def load_image_chunk(image_files, chunk_idx, chunk_size, total_chunks, overlap=5):
     """
-    Loads a chunk of a sequence of 2D FITS images into a 3D cube for processing.
+    Loads a chunk of a sequence of 2D FITS images into a 3D cube for processing, handling edge overlaps.
 
+    Parameters:
     - image_files: List of input image file paths.
     - chunk_idx: Index of the current chunk.
     - chunk_size: Number of divisions along RA/Dec.
     - total_chunks: Total number of chunks.
+    - overlap: Number of pixels to overlap at chunk boundaries to avoid missing spectra.
 
     Returns:
     - cube: 3D NumPy array of the selected chunk.
     - template_files: List of image filenames for writing.
     - chunk_slices: The spatial slice indices for updating the output files.
     """
-    image_files = sorted(image_files)  # Ensure images are in order
 
-    # Read first image to get dimensions
+    image_files = sorted(image_files)  # Ensure correct order
+
+    # Read first image to get full dimensions
     with fits.open(image_files[0]) as hdul:
         full_shape = hdul[0].data.shape  # (RA, Dec)
 
     ra_chunks = np.array_split(range(full_shape[0]), chunk_size)
     dec_chunks = np.array_split(range(full_shape[1]), chunk_size)
 
-    # Determine which RA/Dec slices correspond to this chunk
+    # Determine chunk indices
     ra_idx = chunk_idx % chunk_size
     dec_idx = chunk_idx // chunk_size
 
-    ra_slice = slice(ra_chunks[ra_idx][0], ra_chunks[ra_idx][-1] + 1)
-    dec_slice = slice(dec_chunks[dec_idx][0], dec_chunks[dec_idx][-1] + 1)
+    # Get start/stop indices for the chunk
+    ra_start, ra_end = ra_chunks[ra_idx][0], ra_chunks[ra_idx][-1] + 1
+    dec_start, dec_end = dec_chunks[dec_idx][0], dec_chunks[dec_idx][-1] + 1
+
+    # Expand the chunk slightly for overlap handling
+    ra_start = max(0, ra_start - overlap)
+    ra_end = min(full_shape[0], ra_end + overlap)
+    dec_start = max(0, dec_start - overlap)
+    dec_end = min(full_shape[1], dec_end + overlap)
+
+    ra_slice = slice(ra_start, ra_end)
+    dec_slice = slice(dec_start, dec_end)
 
     # Load only the relevant chunk into memory
-    cube_chunk = np.zeros((len(image_files), ra_slice.stop - ra_slice.start, dec_slice.stop - dec_slice.start), dtype=np.float32)
+    cube_chunk = np.zeros((len(image_files), ra_end - ra_start, dec_end - dec_start), dtype=np.float32)
 
     for i, file in enumerate(image_files):
         with fits.open(file) as hdul:
             cube_chunk[i, :, :] = hdul[0].data[ra_slice, dec_slice]
 
     return cube_chunk, image_files, (ra_slice, dec_slice)
+
 
 
 def write_cube(data_array, output_fits, input_fits, overwrite):
@@ -119,13 +133,16 @@ def write_images(data_array, template_files, overwrite):
         hdu.writeto(output_filename, overwrite=overwrite)
 
 
-def write_chunked_images(data_array, template_files, chunk_idx, total_chunks, overwrite):
+def write_chunked_images(data_array, template_files, chunk_idx, total_chunks, chunk_slices, overwrite):
     """
-    Writes out a sequence of 2D FITS images in chunks, replacing .fits with .contsub.fits.
+    Writes out a sequence of 2D FITS images in chunks, handling overlaps correctly.
 
     - If `chunk_idx == 0`, creates new output files.
-    - Otherwise, updates existing files with new chunk data.
+    - Otherwise, updates existing files only for the processed region.
     """
+
+    ra_slice, dec_slice = chunk_slices  # Extract slice indices
+
     for i, filename in enumerate(template_files):
         output_filename = filename.replace(".fits", ".contsub.fits")
 
@@ -139,8 +156,8 @@ def write_chunked_images(data_array, template_files, chunk_idx, total_chunks, ov
             with fits.open(output_filename, mode='update') as hdul_out:
                 output_data = hdul_out[0].data  # Load existing output data
 
-        # Update chunk in the output file
-        output_data[...] = data_array[i]  # Overwrite only the processed chunk
+        # Update only the corresponding region
+        output_data[ra_slice, dec_slice] = data_array[i, :, :]
 
         # Write back to file
         hdu = fits.PrimaryHDU(output_data, header=header)

@@ -53,7 +53,7 @@ def make_fits_cube(fitslist, output_filename):
     print(f"Writing output cube: {output_filename}")
     # Create new 3D WCS header
     new_wcs = WCS(naxis=3)
-    new_wcs.wcs.ctype = ['RA---TAN', 'DEC--TAN', 'FREQ']
+    new_wcs.wcs.ctype = ['RA---SIN', 'DEC--SIN', 'FREQ']
     new_wcs.wcs.cunit = ['deg', 'deg', 'Hz']
     new_wcs.wcs.crpix = [base_header['CRPIX1'], base_header['CRPIX2'], 1]
     new_wcs.wcs.cdelt = [base_header['CDELT1'], base_header['CDELT2'], np.mean(np.diff(freqs)) if len(freqs) > 1 else 1.0]

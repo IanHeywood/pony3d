@@ -1,83 +1,141 @@
 #!/usr/bin/env python
 # ian.heywood@physics.ox.ac.uk
 
+"""
+Turn a sequence of single-channel FITS images into a 3D spectral FITS cube.
+
+The cube is written one channel at a time, so memory use is a single image
+regardless of the size of the cube. Optionally the cube can be tile-compressed
+(requires fitsio): GZIP_2 is lossless, RICE_1 quantises floating point data.
+"""
 
 import argparse
-from astropy.io import fits
-from astropy.wcs import WCS
-from tqdm import tqdm 
-
-
 import glob
-import numpy as np
+import inspect
 import os
 import sys
 
+import numpy as np
+from astropy.io import fits
+from astropy.wcs import WCS
 
-def make_fits_cube(fitslist, output_filename):
+from pony3d.file_operations import channel_frequency, check_channel_spacing, natural_sort
+
+try:
+    from tqdm import tqdm
+except ImportError:  # progress bars are optional
+    def tqdm(iterable, **kwargs):
+        return iterable
+
+
+# Keywords carried across from the first input image (beam, units, frames, metadata)
+COPY_KEYS = ('BUNIT', 'BMAJ', 'BMIN', 'BPA', 'BTYPE', 'SPECSYS', 'RESTFRQ', 'RESTFREQ',
+             'OBJECT', 'TELESCOP', 'INSTRUME', 'OBSERVER', 'DATE-OBS', 'MJD-OBS',
+             'OBSRA', 'OBSDEC', 'OBSGEO-X', 'OBSGEO-Y', 'OBSGEO-Z')
+
+
+def read_image(fits_file):
+    """Read the 2D image from a FITS file, dropping degenerate (length-1) axes."""
+    with fits.open(fits_file, memmap=True, ignore_missing_simple=True) as hdul:
+        return np.squeeze(np.asarray(hdul[0].data)), hdul[0].header.copy()
+
+
+def cube_header(base_header, freqs, nx, ny, bitpix):
     """
-    Stacks a list of 2D FITS images (with a 1-length frequency axis) into a 3D FITS cube
-    and writes it to an output FITS file.
+    Build the header for the output cube.
 
-    Parameters:
-    - fitslist: List of paths to the input FITS files.
-    - output_filename: Path for the output FITS file.
+    Spatial WCS (projection, reference, any rotation / PC matrix, RADESYS, EQUINOX) comes from
+    the first input image; the spectral axis comes from the measured channel frequencies.
+    Stokes and other degenerate axes are dropped.
     """
-    
-    # Read the first file to determine spatial dimensions and header
-    with fits.open(fitslist[0], memmap=True) as hdul:
-        first_data = hdul[0].data.squeeze()
-        base_header = hdul[0].header
-        wcs = WCS(base_header, naxis=2)  # Keep only spatial WCS
-    
-    spatial_shape = first_data.shape
-    num_files = len(fitslist)
-    print(f'Making cube from {num_files} input images')
-    
-    # Initialize cube data (N_files, RA, Dec)
-    cube_data = np.zeros((num_files, spatial_shape[0], spatial_shape[1]), dtype=first_data.dtype)
-    
-    # Frequency values array
-    freqs = []
-    
-    # Read all images and store them in the cube
-    for i, fitsfile in enumerate(tqdm(fitslist, desc="Stacking FITS files  ", unit="file")):
-        with fits.open(fitsfile, memmap=True) as hdul:
-            image_data = hdul[0].data.squeeze()
-            cube_data[i, :, :] = image_data
-            
-            # Extract frequency information if available
-            freq = hdul[0].header.get('CRVAL3', i + 1.0)  # Use index as fallback
-            freqs.append(freq)
+    header = fits.Header()
+    header['SIMPLE'] = True
+    header['BITPIX'] = bitpix
+    header['NAXIS'] = 3
+    header['NAXIS1'] = nx
+    header['NAXIS2'] = ny
+    header['NAXIS3'] = len(freqs)
 
-    print(f"Writing output cube: {output_filename}")
-    # Create new 3D WCS header
-    new_wcs = WCS(naxis=3)
-    # Take the projection from the input images rather than assuming one
-    new_wcs.wcs.ctype = [base_header.get('CTYPE1', 'RA---SIN'), base_header.get('CTYPE2', 'DEC--SIN'), 'FREQ']
-    new_wcs.wcs.cunit = [base_header.get('CUNIT1', 'deg'), base_header.get('CUNIT2', 'deg'), 'Hz']
-    new_wcs.wcs.crpix = [base_header['CRPIX1'], base_header['CRPIX2'], 1]
-    new_wcs.wcs.cdelt = [base_header['CDELT1'], base_header['CDELT2'], np.mean(np.diff(freqs)) if len(freqs) > 1 else 1.0]
-    new_wcs.wcs.crval = [base_header['CRVAL1'], base_header['CRVAL2'], freqs[0]]
+    celestial = WCS(base_header).celestial
+    header.extend(celestial.to_header(), update=True)
+    header['WCSAXES'] = 3
+    header['CTYPE3'] = 'FREQ'
+    header['CUNIT3'] = 'Hz'
+    header['CRPIX3'] = 1.0
+    header['CRVAL3'] = float(freqs[0])
+    header['CDELT3'] = float(np.median(np.diff(freqs))) if len(freqs) > 1 else float(base_header.get('CDELT3', 1.0))
 
-    # Convert WCS to header and update keywords
-    cube_header = new_wcs.to_header()
-    cube_header['NAXIS'] = 3
-    cube_header['NAXIS1'] = spatial_shape[1]
-    cube_header['NAXIS2'] = spatial_shape[0]
-    cube_header['NAXIS3'] = num_files
-
-    # Carry across beam, units, reference frames and other useful keywords
-    for key in ('BUNIT', 'BMAJ', 'BMIN', 'BPA', 'BTYPE', 'RADESYS', 'EQUINOX', 'SPECSYS', 'RESTFRQ',
-                'OBJECT', 'TELESCOP', 'OBSERVER', 'DATE-OBS', 'OBSRA', 'OBSDEC'):
+    for key in COPY_KEYS:
         if key in base_header:
-            cube_header[key] = base_header[key]
+            header[key] = base_header[key]
+    return header
 
-    # Write the stacked cube to FITS
-    hdu = fits.PrimaryHDU(data=cube_data, header=cube_header)
-    hdu.writeto(output_filename, overwrite=True)
 
-    print("Done")
+def write_cube_streamed(fitslist, freqs, outfile, overwrite=False):
+    """Write an uncompressed float32 cube channel by channel with astropy's StreamingHDU."""
+    image0, header0 = read_image(fitslist[0])
+    ny, nx = image0.shape
+    header = cube_header(header0, freqs, nx, ny, bitpix=-32)
+
+    if os.path.exists(outfile):
+        if not overwrite:
+            print(f'{outfile} exists, use --overwrite')
+            sys.exit(1)
+        os.remove(outfile)
+
+    shdu = fits.StreamingHDU(outfile, header)
+    try:
+        for fitsfile in tqdm(fitslist, desc='Stacking FITS files  ', unit='file'):
+            image, _ = read_image(fitsfile)
+            if image.shape != (ny, nx):
+                raise ValueError(f'{fitsfile}: expected spatial shape {(ny, nx)}, got {image.shape}')
+            shdu.write(image.astype('>f4'))
+    finally:
+        shdu.close()
+
+
+def write_cube_compressed(fitslist, freqs, outfile, method, qlevel, tile_xy, overwrite=False):
+    """
+    Write a tile-compressed float32 cube channel by channel with fitsio.
+
+    The compressed image is stored in the first extension (the primary HDU is empty,
+    as the FITS tile-compression convention requires), and the WCS is written there.
+    """
+    try:
+        import fitsio
+    except ImportError:
+        print('Compression needs the fitsio package: pip install fitsio')
+        sys.exit(1)
+
+    image0, header0 = read_image(fitslist[0])
+    ny, nx = image0.shape
+    header = cube_header(header0, freqs, nx, ny, bitpix=-32)
+
+    if os.path.exists(outfile) and not overwrite:
+        print(f'{outfile} exists, use --overwrite')
+        sys.exit(1)
+
+    tx, ty = (int(s.strip()) for s in tile_xy.split(','))
+    tile_dims = [1, max(1, min(ty, ny)), max(1, min(tx, nx))]  # numpy order: tiles never span channels
+
+    kwargs = dict(dims=[len(fitslist), ny, nx], dtype=np.float32, compress=method, qlevel=qlevel)
+    # The tile size argument is named differently in different fitsio versions
+    params = inspect.signature(fitsio.FITS.create_image_hdu).parameters
+    kwargs['tile_dims' if 'tile_dims' in params else 'tiledims'] = tile_dims
+
+    with fitsio.FITS(outfile, mode='rw', clobber=True) as f:
+        f.create_image_hdu(img=None, **kwargs)
+        img = f[-1]
+        for k, fitsfile in enumerate(tqdm(fitslist, desc='Stacking FITS files  ', unit='file')):
+            image, _ = read_image(fitsfile)
+            if image.shape != (ny, nx):
+                raise ValueError(f'{fitsfile}: expected spatial shape {(ny, nx)}, got {image.shape}')
+            img.write(image.astype(np.float32)[np.newaxis, :, :], start=[k, 0, 0])
+
+        # WCS and other keywords; structural keywords are managed by fitsio
+        structural = {'SIMPLE', 'BITPIX', 'NAXIS', 'NAXIS1', 'NAXIS2', 'NAXIS3', 'EXTEND'}
+        img.write_keys([{'name': card.keyword, 'value': card.value, 'comment': card.comment}
+                        for card in header.cards if card.keyword and card.keyword not in structural])
 
 
 def read_textfile(filename):
@@ -87,40 +145,42 @@ def read_textfile(filename):
 
 def sort_by_freq(fitslist):
     """
-    Sorts a list of FITS files based on their frequency values (FREQ or CRVAL3 keyword).
+    Sorts a list of FITS files by channel frequency.
     Exits the program if the frequency channels are not equally spaced.
-
-    Parameters:
-    - fitslist: List of paths to FITS files.
 
     Returns:
     - sorted_files: List of FITS files sorted by increasing frequency.
+    - sorted_freqs: Their frequencies (Hz).
     """
     freq_dict = {}
-    for fitsfile in tqdm(fitslist, desc="Checking frequencies ", unit="file"):
-        with fits.open(fitsfile, memmap=True) as hdul:
-            header = hdul[0].header
-            freq = header.get('FREQ') or header.get('CRVAL3')
-            if freq is None:
-                print(f"Frequency information not found in {fitsfile}")
-                sys.exit(1) 
-            freq_dict[fitsfile] = freq
+    for fitsfile in tqdm(fitslist, desc='Checking frequencies ', unit='file'):
+        header = fits.getheader(fitsfile)
+        freq = channel_frequency(header)
+        if freq is None:
+            freq = header.get('FREQ')
+        if freq is None:
+            print(f'Frequency information not found in {fitsfile}')
+            sys.exit(1)
+        freq_dict[fitsfile] = freq
 
-    # Sort files based on freq
     sorted_files = sorted(freq_dict.keys(), key=lambda f: freq_dict[f])
     sorted_freqs = [freq_dict[f] for f in sorted_files]
 
-    # Check for equal freq spacing
-    freq_diffs = np.diff(sorted_freqs)
-    if not np.allclose(freq_diffs, freq_diffs[0], atol=1e-6):  # Tolerance to avoid floating-point issues
-        print("Input files are not contiguous in frequency")
+    if len(set(sorted_freqs)) != len(sorted_freqs):
+        print('Some input files have the same frequency')
+        sys.exit(1)
+    even, spacing, gaps = check_channel_spacing(sorted_freqs)
+    if not even:
+        print('Input files are not contiguous in frequency, gaps after:')
+        for g in gaps[:10]:
+            print(f'     --- {sorted_files[g]}')
         sys.exit(1)
 
     if fitslist == sorted_files:
         print('Input files are in frequency order and are contiguous')
     else:
         print('Input files have been re-ordered based on their freq values')
-    return sorted_files
+    return sorted_files, sorted_freqs
 
 
 def main():
@@ -130,33 +190,48 @@ def main():
     group.add_argument('--pattern', type=str, default='', metavar='', help='Pattern to glob for to obtain image sequence')
     group.add_argument('--textfile', type=str, default='', metavar='', help='Open a text file containing the input filenames')
     parser.add_argument('--outfile', type=str, default='', metavar='', help='Name of output FITS cube', required=True)
-    args = parser.parse_args()    
+    parser.add_argument('--compress', type=str, default='none', choices=['none', 'gzip', 'rice'],
+                        help='Tile compression, needs fitsio: gzip = GZIP_2, lossless; rice = RICE_1, quantised (lossy) '
+                             'at --qlevel (default = none)')
+    parser.add_argument('--qlevel', type=float, default=16.0, metavar='',
+                        help='Quantisation level for rice compression: values are quantised to the tile noise / qlevel, '
+                             'so higher keeps more precision (default = 16; fpack uses 4)')
+    parser.add_argument('--tilesize', type=str, default='256,256', metavar='',
+                        help='Compression tile size in spatial pixels, x,y (default = 256,256)')
+    parser.add_argument('--overwrite', action='store_true', help='Overwrite an existing output cube')
+    args = parser.parse_args()
 
     if args.pattern:
-        fitslist = sorted(glob.glob(f'*{args.pattern}*.fits'))
+        fitslist = natural_sort(glob.glob(f'*{args.pattern}*.fits'))
         if len(fitslist) == 0:
             print('Provided pattern returns no files. Note that files must have a .fits suffix.')
-            sys.exit()
+            sys.exit(1)
 
     elif args.textfile:
         print(f'Reading {args.textfile}')
         fitslist = read_textfile(args.textfile)
         found = True
-        for fitsfile in tqdm(fitslist, desc="Checking files exist ", unit="file"):
+        for fitsfile in tqdm(fitslist, desc='Checking files exist ', unit='file'):
             if not os.path.isfile(fitsfile):
                 print(f'     --- {fitsfile} not found')
                 found = False
         if not found:
             print('Please check missing files')
-            sys.exit()
+            sys.exit(1)
 
-    fitslist = sort_by_freq(fitslist)
- 
-    make_fits_cube(fitslist,args.outfile)
+    fitslist, freqs = sort_by_freq(fitslist)
+    print(f'Making cube from {len(fitslist)} input images')
 
+    if args.compress == 'none':
+        write_cube_streamed(fitslist, freqs, args.outfile, overwrite=args.overwrite)
+    else:
+        method = {'gzip': 'GZIP_2', 'rice': 'RICE_1'}[args.compress]
+        qlevel = None if args.compress == 'gzip' else args.qlevel  # None = no quantisation (lossless)
+        write_cube_compressed(fitslist, freqs, args.outfile, method, qlevel, args.tilesize, overwrite=args.overwrite)
+
+    print(f'Written {args.outfile}')
 
 
 if __name__ == '__main__':
 
     main()
-

@@ -2,8 +2,10 @@ numpy
 scipy
 astropy
 regions
-# tools/ only
+# pony3d-movie
 tqdm
 matplotlib
 opencv-python
 Pillow
+# pony3d-makecube --compress
+fitsio

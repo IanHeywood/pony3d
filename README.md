@@ -105,16 +105,18 @@ Each cube worker writes only its own core channels, and an island is extracted b
 
 ## Tools
 
-The `tools/` folder has standalone scripts (install their extra dependencies with `pip install pony3d[tools]`):
+Installing pony3d also installs these commands:
 
-* `make-cube.py`: stack a sequence of images into a FITS cube
-* `break-cube.py`: split a FITS cube into one image per channel, carrying across CASA per-channel beams
-* `imcontsub.py`: image-domain continuum subtraction for a cube or an image sequence
-* `pony-movie.py`: render an MP4 of a channel sequence, optionally with mask contours
+* `pony3d-makecube`: stack a sequence of single-channel images into a FITS cube. The cube is written one channel at a time, so memory use is one image whatever the cube size. `--compress gzip` (lossless) or `--compress rice` (quantised, see `--qlevel`) writes a tile-compressed cube, and needs `pip install pony3d[compress]`
+* `pony3d-breakcube`: split a FITS cube into one image per channel, carrying across CASA per-channel beams
+* `pony3d-contsub`: image-domain continuum subtraction for a cube or an image sequence
+* `pony3d-movie`: render an MP4 of a channel sequence, optionally with mask contours; needs `pip install pony3d[tools]`
+
+Run any of them with `-h` for their options. The scripts in `tools/` are wrappers that run the same commands from a clone without installing.
 
 ## Testing
 
-`tests/run_test.py` makes a small synthetic image sequence with injected 3D sources, runs `pony3d` on it with several chunk sizes, and checks that the sources are recovered and that the results do not depend on chunking:
+`tests/run_test.py` makes a small synthetic image sequence with injected 3D sources, runs `pony3d` on it with several chunk sizes, and checks that the sources are recovered and that the results do not depend on chunking. It also round-trips the images through `pony3d-makecube` and `pony3d-breakcube`:
 
 ```
 python tests/run_test.py

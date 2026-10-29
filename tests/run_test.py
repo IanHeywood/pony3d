@@ -17,6 +17,8 @@ across chunk boundaries. pony3d is then run with several chunk sizes and the scr
      a clean 3-axis header; mask subcubes are 0/1 masks of the target island only
   8. the boxcar averaging path runs
   9. a missing channel is reported, and catalogue frequencies use the true frequencies
+ 10. pony3d-makecube builds a cube matching the inputs (and, with fitsio installed, a
+     lossless gzip-compressed one), and pony3d-breakcube splits it back
 
 Usage (from anywhere, in an environment with numpy, scipy, astropy and regions):
 
@@ -131,6 +133,92 @@ def read_catalogue(path):
 def read_masks(workdir, opdir):
     files = sorted(glob.glob(os.path.join(workdir, opdir, 'filtered', '*.fits')))
     return files, np.stack([np.squeeze(fits.getdata(f)) for f in files]) if files else None
+
+
+def run_tool(module, args, cwd):
+    env = dict(os.environ, PYTHONPATH=REPO + os.pathsep + os.environ.get('PYTHONPATH', ''))
+    p = subprocess.run([sys.executable, '-m', module] + args, cwd=cwd, env=env, capture_output=True, text=True)
+    return p.returncode, p.stdout + p.stderr
+
+
+def check_cube(c, cube_file, inputs, label, hdu=0, exact=True):
+    """Check a cube against the input images: data, shape, spatial WCS and channel frequencies."""
+    with fits.open(cube_file) as hdul:
+        data = hdul[hdu].data
+        hdr = hdul[hdu].header
+    expected = np.stack(inputs)
+    if not c.check(data is not None and data.shape == expected.shape, f'{label}: shape {None if data is None else data.shape} (expected {expected.shape})'):
+        return
+    if exact:
+        same = np.array_equal(np.isnan(data), np.isnan(expected)) and np.array_equal(data[~np.isnan(data)], expected[~np.isnan(expected)])
+        c.check(same, f'{label}: data identical to the input images')
+    w = WCS(hdr)
+    ok_axes = w.naxis == 3 and hdr.get('CTYPE3') == 'FREQ' and 'CTYPE4' not in hdr
+    _, _, f_first = w.pixel_to_world_values(0, 0, 0)
+    _, _, f_last = w.pixel_to_world_values(0, 0, NCHAN - 1)
+    ok_freq = np.isclose(f_first, FREQ0) and np.isclose(f_last, FREQ0 + (NCHAN - 1) * DF)
+    ra, dec = w.celestial.pixel_to_world_values(10, 20)
+    ra0, dec0 = WCS(chan_header(0)).celestial.pixel_to_world_values(10, 20)
+    ok_pos = np.isclose(ra, ra0) and np.isclose(dec, dec0)
+    c.check(ok_axes and ok_freq and ok_pos and 'BMAJ' in hdr and 'BUNIT' in hdr,
+            f'{label}: 3-axis WCS matching the inputs (frequencies {f_first:.0f} -- {f_last:.0f} Hz), beam and units present')
+
+
+def check_cube_tools(c, workdir):
+    tooldir = os.path.join(workdir, 'cubetools')
+    os.makedirs(tooldir, exist_ok=True)
+    for f in glob.glob(os.path.join(workdir, f'{PREFIX}*.fits')):
+        shutil.copy(f, tooldir)
+    inputs = [np.squeeze(fits.getdata(os.path.join(tooldir, f'{PREFIX}{i:04d}-image.fits'))) for i in range(NCHAN)]
+
+    rc, log = run_tool('pony3d.tools.makecube', ['--pattern', PREFIX, '--outfile', 'cube.fits'], tooldir)
+    if c.check(rc == 0, 'pony3d-makecube exited cleanly'):
+        check_cube(c, os.path.join(tooldir, 'cube.fits'), inputs, 'makecube cube')
+    else:
+        print('\n'.join('      ' + l for l in log.splitlines()[-15:]))
+        return
+
+    try:
+        import fitsio  # noqa: F401
+        have_fitsio = True
+    except ImportError:
+        have_fitsio = False
+    if have_fitsio:
+        rc, log = run_tool('pony3d.tools.makecube', ['--pattern', PREFIX, '--outfile', 'cube_gzip.fits', '--compress', 'gzip', '--tilesize', '64,64'], tooldir)
+        if c.check(rc == 0, 'pony3d-makecube --compress gzip exited cleanly'):
+            check_cube(c, os.path.join(tooldir, 'cube_gzip.fits'), inputs, 'gzip cube', hdu=1)
+        else:
+            print('\n'.join('      ' + l for l in log.splitlines()[-15:]))
+        rc, log = run_tool('pony3d.tools.makecube', ['--pattern', PREFIX, '--outfile', 'cube_rice.fits', '--compress', 'rice'], tooldir)
+        if c.check(rc == 0, 'pony3d-makecube --compress rice exited cleanly'):
+            check_cube(c, os.path.join(tooldir, 'cube_rice.fits'), inputs, 'rice cube', hdu=1, exact=False)
+            rice = fits.getdata(os.path.join(tooldir, 'cube_rice.fits'), ext=1)
+            err = np.nanmax(np.abs(rice - np.stack(inputs)))
+            c.check(err < 0.25 * SIGMA, f'rice cube: max quantisation error {err / SIGMA:.3f} sigma')
+        else:
+            print('\n'.join('      ' + l for l in log.splitlines()[-15:]))
+    else:
+        print('  [SKIP] compressed cubes (fitsio not installed)')
+
+    rc, log = run_tool('pony3d.tools.breakcube', ['cube.fits', 'broken'], tooldir)
+    if c.check(rc == 0, 'pony3d-breakcube exited cleanly'):
+        out = natural_sorted(glob.glob(os.path.join(tooldir, 'broken', '*.fits')))
+        ok = len(out) == NCHAN
+        for i, f in enumerate(out if ok else []):
+            d = np.squeeze(fits.getdata(f))
+            h = fits.getheader(f)
+            if not (np.array_equal(np.isnan(d), np.isnan(inputs[i])) and np.allclose(d[~np.isnan(d)], inputs[i][~np.isnan(inputs[i])])
+                    and np.isclose(h['CRVAL3'], FREQ0 + i * DF)):
+                ok = False
+                break
+        c.check(ok, f'pony3d-breakcube: {len(out)} channel images matching the inputs in data and frequency')
+    else:
+        print('\n'.join('      ' + l for l in log.splitlines()[-15:]))
+
+
+def natural_sorted(names):
+    import re
+    return sorted(names, key=lambda k: [int(t) if t.isdigit() else t for t in re.split('([0-9]+)', k)])
 
 
 class Checker:
@@ -292,6 +380,9 @@ def main():
                 best = min(gap_cat, key=lambda r: abs(r[3] - f_mid)) if gap_cat else None
                 c.check(best is not None and abs(best[3] - f_mid) < 1.0 * DF / 1e6,
                         f'after the gap: source chans {c0}-{c1} f_com {best[3] if best else None} MHz (expected {f_mid:.3f})')
+
+    print('Round trip through pony3d-makecube and pony3d-breakcube')
+    check_cube_tools(c, workdir)
 
     print()
     if c.failures:

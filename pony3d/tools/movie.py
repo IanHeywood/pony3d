@@ -3,17 +3,26 @@
 
 
 import argparse
-import cv2
 import glob
-import matplotlib.pyplot as plt
 import numpy as np
 import os
-import re
 import sys
 import tempfile
 from astropy.io import fits
 from multiprocessing import Pool
-from PIL import Image, ImageDraw, ImageFont
+
+from pony3d.file_operations import natural_sort
+
+# Optional dependencies: pip install pony3d[tools]
+try:
+    import cv2
+    import matplotlib
+    matplotlib.use('Agg') # no display needed (e.g. on a cluster node)
+    import matplotlib.pyplot as plt
+    from PIL import Image, ImageDraw, ImageFont
+    MISSING = None
+except ImportError as e:
+    MISSING = e.name
 
 
 def render_png(fits_image_path, mask_fits_path, pixmin, pixmax, png_name, ccol, inch_size=(7,7), dpi=300):
@@ -99,12 +108,6 @@ def process_frame(i, datafits, maskfits, output_png, nframes, pixmin, pixmax, cc
     annotate_png(output_png, datafits, freq, i, nframes, nolabel, fontpath, fontsize,)
 
 
-def natural_sort(l):
-    """Sort strings the way humans expect (channel 10 after channel 9)."""
-    convert = lambda text: int(text) if text.isdigit() else text.lower()
-    return sorted(l, key=lambda key: [convert(c) for c in re.split('([0-9]+)', key)])
-
-
 def get_png_size(png_file):
     """
     Parameters:
@@ -155,6 +158,10 @@ def make_cv2_video(png_list, outfile, fps):
 
 
 def main():
+
+    if MISSING:
+        print(f'pony3d-movie needs {MISSING}, which is not installed. Install the tool dependencies with: pip install pony3d[tools]')
+        sys.exit(1)
 
     parser = argparse.ArgumentParser(description='Render MP4 movies from a sequence of FITS images')
 

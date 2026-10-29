@@ -2,7 +2,6 @@
 # ian.heywood@physics.ox.ac.uk
 
 import argparse
-import itertools
 import logging
 import numpy as np
 import os
@@ -10,15 +9,15 @@ import sys
 import time
 import warnings
 import glob
-import re
 
 from astropy.io import fits
-from astropy.stats import sigma_clip
 from datetime import datetime
 from functools import partial
 from multiprocessing import Pool
 from scipy.signal import savgol_filter
 from scipy.ndimage import binary_dilation, median_filter
+
+from pony3d.file_operations import natural_sort
 
 
 def initialize_logging():
@@ -33,12 +32,6 @@ def initialize_logging():
     logger = logging.getLogger()
     logger.addHandler(logging.StreamHandler())
     return logger
-
-
-def natural_sort(l):
-    """Sort strings the way humans expect (channel 10 after channel 9)."""
-    convert = lambda text: int(text) if text.isdigit() else text.lower()
-    return sorted(l, key=lambda key: [convert(c) for c in re.split('([0-9]+)', key)])
 
 
 def load_cube(input_fits):

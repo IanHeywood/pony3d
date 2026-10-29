@@ -94,6 +94,15 @@ def write_cube_streamed(fitslist, freqs, outfile, overwrite=False):
         shdu.close()
 
 
+def compressed_tile_shape(fits_file):
+    """ZTILE1-3 of the first tile-compressed HDU, read from the raw (compressed) header."""
+    with fits.open(fits_file, disable_image_compression=True) as hdul:
+        for hdu in hdul[1:]:
+            if hdu.header.get('ZIMAGE'):
+                return [hdu.header.get(f'ZTILE{i}', 1) for i in (1, 2, 3)]
+    return None
+
+
 def write_cube_compressed(fitslist, freqs, outfile, method, qlevel, tile_xy, overwrite=False):
     """
     Write a tile-compressed float32 cube channel by channel with fitsio.
@@ -121,10 +130,27 @@ def write_cube_compressed(fitslist, freqs, outfile, method, qlevel, tile_xy, ove
     kwargs = dict(dims=[len(fitslist), ny, nx], dtype=np.float32, compress=method, qlevel=qlevel)
     # The tile size argument is named differently in different fitsio versions
     params = inspect.signature(fitsio.FITS.create_image_hdu).parameters
-    kwargs['tile_dims' if 'tile_dims' in params else 'tiledims'] = tile_dims
+    tile_key = 'tile_dims' if 'tile_dims' in params else 'tiledims'
 
-    with fitsio.FITS(outfile, mode='rw', clobber=True) as f:
-        f.create_image_hdu(img=None, **kwargs)
+    # Each tile must hold exactly one channel (ZTILE3 = 1). If a tile spans channels, every
+    # channel write only partly fills it and the tile is re-quantised repeatedly, which
+    # corrupts RICE-compressed data. fitsio versions differ in the axis order they expect
+    # for the tile shape, so check what was created and swap the order if needed.
+    wanted = [tile_dims[2], tile_dims[1], tile_dims[0]]  # FITS order: ZTILE1 (x), ZTILE2 (y), ZTILE3 (chan)
+    got = None
+    for candidate in (tile_dims, wanted):
+        with fitsio.FITS(outfile, mode='rw', clobber=True) as f:
+            f.create_image_hdu(img=None, **kwargs, **{tile_key: candidate})
+        got = compressed_tile_shape(outfile)
+        if got == wanted:
+            break
+    if got != wanted:
+        print(f'Could not create compression tiles of {wanted[0]} x {wanted[1]} x 1 pixels (got {got})')
+        sys.exit(1)
+    print(f'Compression {method}, tiles of {got[0]} x {got[1]} x {got[2]} pixels'
+          + (f', qlevel {qlevel}' if qlevel is not None else ''))
+
+    with fitsio.FITS(outfile, mode='rw') as f:
         img = f[-1]
         for k, fitsfile in enumerate(tqdm(fitslist, desc='Stacking FITS files  ', unit='file')):
             image, _ = read_image(fitsfile)

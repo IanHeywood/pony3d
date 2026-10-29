@@ -190,7 +190,15 @@ def check_cube_tools(c, workdir):
         else:
             print('\n'.join('      ' + l for l in log.splitlines()[-15:]))
         rc, log = run_tool('pony3d.tools.makecube', ['--pattern', PREFIX, '--outfile', 'cube_rice.fits', '--compress', 'rice'], tooldir)
+        for line in log.splitlines():
+            if line.startswith(('Compression', 'Warning')):
+                print(f'      {line}')
         if c.check(rc == 0, 'pony3d-makecube --compress rice exited cleanly'):
+            for name in ('cube_gzip.fits', 'cube_rice.fits'):
+                with fits.open(os.path.join(tooldir, name), disable_image_compression=True) as zhdul:
+                    zh = zhdul[1].header.copy()  # raw compressed header, with the Z keywords
+                ztile = [zh.get(f'ZTILE{i}') for i in (1, 2, 3)]
+                c.check(ztile[2] == 1, f'{name}: one channel per compression tile (ZTILE1-3 = {ztile}, ZQUANTIZ = {zh.get("ZQUANTIZ")})')
             check_cube(c, os.path.join(tooldir, 'cube_rice.fits'), inputs, 'rice cube', hdu=1, exact=False)
             rice = fits.getdata(os.path.join(tooldir, 'cube_rice.fits'), ext=1)
             err = np.nanmax(np.abs(rice - np.stack(inputs)))

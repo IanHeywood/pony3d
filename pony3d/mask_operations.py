@@ -277,12 +277,20 @@ def make_averaged_mask(input_fits_subset, threshold, boxsize, dilate, trim, regi
             logging.error(f'Failed to write FITS file: [{log_prefix}_{idx}] Writing noise image {noise_fits}')
 
 
-def filter_mask(mask_subset, minchans, specdilate, masktag, filtertag, overwrite, idx):
+def filter_mask(mask_subset, core_lo, core_hi, minchans, specdilate, masktag, filtertag, overwrite, idx):
     """
-    Filter mask images for islands spanning fewer than minchans along the spectral axis.
+    Filter mask images for islands spanning fewer than minchans along the spectral axis,
+    then dilate along the spectral axis.
+
+    The subset is a window of channels: a core (written out by this worker) plus a halo
+    of channels either side (read for context only, written by neighbouring workers).
+    With a halo of at least minchans + specdilate channels, every island touching the
+    core is judged on its full spectral extent, so results do not depend on chunking
+    and no two workers write the same file.
 
     Args:
-    mask_subset (list): List of mask files.
+    mask_subset (list): List of mask files (halo + core + halo).
+    core_lo, core_hi (int): Core channel range within mask_subset (core_hi exclusive).
     minchans (int): Minimum number of channels below which to reject an island
     specdilate (int): Number of iterations of binary dilation in the spectral dimension.
     masktag (str): Tag for mask files.
@@ -290,21 +298,19 @@ def filter_mask(mask_subset, minchans, specdilate, masktag, filtertag, overwrite
     overwrite (bool): Whether to overwrite existing files.
     idx (int): Index for logging.
     """
-    
+
     log_prefix = 'Filter'
     idx = str(idx).zfill(5)
 
     try:
 
-        logging.info(f'[{log_prefix}_{idx}] Worker process {idx} operating on image subset {mask_subset[0]} -- {mask_subset[-1]}')
-        template_fits = []
+        logging.info(f'[{log_prefix}_{idx}] Worker process {idx} operating on image subset {mask_subset[core_lo]} -- {mask_subset[core_hi-1]} (+ halo)')
         output_fits = []
         exists = []
 
-        for input_fits in mask_subset:
+        for input_fits in mask_subset[core_lo:core_hi]:
             filtered_name = tagged_name(os.path.basename(input_fits).replace(f'.{masktag}.fits', '.fits'), filtertag)
             filtered_fits = os.path.join(os.path.dirname(os.path.dirname(input_fits)), filtertag, filtered_name)
-            template_fits.append(input_fits)
             output_fits.append(filtered_fits)
             exists.append(os.path.isfile(filtered_fits))
 
@@ -313,40 +319,36 @@ def filter_mask(mask_subset, minchans, specdilate, masktag, filtertag, overwrite
             return
 
         logging.info(f'[{log_prefix}_{idx}] Reading mask subset')
-        cube = load_cube(mask_subset) != 0
-        cube = cube.astype(bool)
+        cube = load_cube(mask_subset, dtype=bool)
 
         # Filter out islands that span fewer than minchans channels
         if minchans > 0:
             logging.info(f'[{log_prefix}_{idx}] Removing islands with fewer than {minchans} contiguous channels')
             labeled_cube, n_islands = label(cube)
-            island_sizes = np.zeros(n_islands + 1, dtype=int)
-            flat_indices = np.where(labeled_cube > 0)
-            flat_labels = labeled_cube[flat_indices]
-            linear_indices = flat_labels * cube.shape[2] + flat_indices[2]
-            counts = np.bincount(linear_indices, minlength=(n_islands + 1) * cube.shape[2])
-            counts = counts.reshape(n_islands + 1, cube.shape[2])
-        
-            unique_counts = np.sum(counts > 0, axis=1)
-            small_islands = np.where(unique_counts < minchans)[0]
-            mask = np.isin(labeled_cube, small_islands)
-            cube[mask] = False
-            del labeled_cube, mask
+            # Islands are connected, so the channel span from the bounding box equals
+            # the number of distinct channels the island occupies
+            keep = np.zeros(n_islands + 1, dtype=bool)
+            for region_idx, bbox in enumerate(find_objects(labeled_cube), start=1):
+                if bbox is not None:
+                    keep[region_idx] = (bbox[2].stop - bbox[2].start) >= minchans
+            cube = keep[labeled_cube]
+            logging.info(f'[{log_prefix}_{idx}] Retained {keep.sum()} of {n_islands} islands')
+            del labeled_cube
 
         # Dilate along spectral axis
         if specdilate > 0:
             logging.info(f'[{log_prefix}_{idx}] Dilating islands with {specdilate} iterations along spectral axis')
-            recon_struct = np.array([1,1,1])[None,None,:]
+            recon_struct = np.array([1,1,1], dtype=bool)[None,None,:]
             cube = binary_dilation(cube, structure = recon_struct, iterations = specdilate)
 
-        # Write out filtered images
+        # Write out filtered images for the core channels only
         for i, filtered_fits in enumerate(output_fits):
             if exists[i] and not overwrite:
                 logging.info(f'[{log_prefix}_{idx}] Skipping {filtered_fits} (overwrite disabled)')
             else:
                 logging.info(f'[{log_prefix}_{idx}] Writing {filtered_fits}')
-                template_image, header = get_image(template_fits[i])
-                f_written = flush_image(cube[:, :, i], header, filtered_fits)
+                template_image, header = get_image(mask_subset[core_lo + i])
+                f_written = flush_image(cube[:, :, core_lo + i], header, filtered_fits)
                 if not f_written:
                     logging.error(f'Failed to write FITS file: [{log_prefix}_{idx}] Writing {filtered_fits}')
 
@@ -376,7 +378,7 @@ def count_islands(input_fits, orig_fits, idx):
     logging.info(f'[{log_prefix}_{idx}] Channel mask parameters: {input_fits} {n_islands} {rms}')
 
 
-def extract_islands(image_subset, mask_subset, opdir, catalogue, subcubes, submasks, padspatial, padspectral, catname, cubetag, overwrite, idx):
+def extract_islands(image_subset, mask_subset, core_lo, core_hi, truncated_lo, truncated_hi, opdir, catalogue, subcubes, submasks, padspatial, padspectral, catname, cubetag, overwrite, idx):
     """
     Load a subset of channels into a cube
     Label each region
@@ -386,6 +388,11 @@ def extract_islands(image_subset, mask_subset, opdir, catalogue, subcubes, subma
     Args:
     image_subset (list): list of input radio images
     mask_subset (list): List of mask files.
+    core_lo, core_hi (int): Core channel range within the subsets (core_hi exclusive). An island
+                            belongs to this worker if its first channel lies in the core, so each
+                            island is extracted exactly once.
+    truncated_lo, truncated_hi (bool): Whether more channels exist below / above the subset
+                                       (used to warn about islands cut by the subset edge)
     catalogue (bool): Switch to write out catalogue or not
     subcubes (bool): Switch to write out subcubes or not
     padspatial (int): Padding for subcubes in the spatial dimensions
@@ -401,14 +408,10 @@ def extract_islands(image_subset, mask_subset, opdir, catalogue, subcubes, subma
 
     log_prefix = 'Extract'
     idx = str(idx).zfill(5)
-    logging.info(f'[{log_prefix}_{idx}] Worker process {idx} operating on image subset {mask_subset[0]} -- {mask_subset[-1]}')
-    template_fits = []
-    output_fits = []
-    exists = []
+    logging.info(f'[{log_prefix}_{idx}] Worker process {idx} operating on image subset {mask_subset[core_lo]} -- {mask_subset[core_hi-1]} (+ halo)')
 
     logging.info(f'[{log_prefix}_{idx}] Reading filtered mask subset')
-    cube = load_cube(mask_subset) 
-    cube = cube.astype(bool)
+    cube = load_cube(mask_subset, dtype=bool)
 
     dummy_img, header = get_image(mask_subset[0])
     wcs = WCS(header)
@@ -424,12 +427,19 @@ def extract_islands(image_subset, mask_subset, opdir, catalogue, subcubes, subma
     logging.info(f'[{log_prefix}_{idx}] Image subset contains {n_islands} islands')
     
     bounding_boxes = find_objects(labeled_cube)
+    nchan_subset = labeled_cube.shape[2]
     src_ids = []
+    src_bboxes = []
+    n_truncated = 0
 
     for region_idx, bbox in enumerate(bounding_boxes, start = 1):
 
-        if bbox[2].stop < labeled_cube.shape[2]: # check that the island does not butt up against the top end of the cube
-           
+        # Only islands starting in the core belong to this worker; the rest are handled by a neighbour
+        if bbox is not None and core_lo <= bbox[2].start < core_hi:
+
+            if (bbox[2].start == 0 and truncated_lo) or (bbox[2].stop == nchan_subset and truncated_hi):
+                n_truncated += 1
+
             sub_array = labeled_cube[bbox]
             com = center_of_mass(sub_array == region_idx)
             com = tuple(c + s.start for c, s in zip(com, bbox))
@@ -438,6 +448,7 @@ def extract_islands(image_subset, mask_subset, opdir, catalogue, subcubes, subma
             dec = round(float(dec),5)
             ra_hms, dec_dms, src_id = format_ra_dec(ra,dec)
             src_ids.append(src_id)
+            src_bboxes.append(bbox)
             ch_com = com[2]
             f_com = round(((freq0+(ch_com*df))/1e6),3)
             z_com = round(((f_hi/f_com) - 1.0),4)
@@ -451,6 +462,10 @@ def extract_islands(image_subset, mask_subset, opdir, catalogue, subcubes, subma
                 f = open(fname,'w')
                 f.close()
 
+    logging.info(f'[{log_prefix}_{idx}] Extracting {len(src_ids)} islands that start in this subset')
+    if n_truncated > 0:
+        logging.warning(f'[{log_prefix}_{idx}] {n_truncated} island(s) reach the edge of the subset and may be truncated; increase --overlap')
+
     if not submasks:
         del labeled_cube
         gc.collect()
@@ -463,7 +478,7 @@ def extract_islands(image_subset, mask_subset, opdir, catalogue, subcubes, subma
         for src in range(0,len(src_ids)):
             src_id = src_ids[src]
             logging.info(f'[{log_prefix}_{idx}] Writing subcube for {src_id}')
-            bbox = bounding_boxes[src]
+            bbox = src_bboxes[src]
             centre_index = tuple((s.start + s.stop - 1) // 2 for s in bbox)
             ra, dec, xxx = wcs.pixel_to_world_values(centre_index[1],centre_index[0],0)
             ch0 = np.max((0,bbox[2].start))

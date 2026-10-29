@@ -29,6 +29,23 @@ def run_pool(func, iterable_params, processes, stage, logger, maxtasksperchild=N
             sys.exit(1)
 
 
+def channel_chunks(nchan, chanchunk, halo):
+    """
+    Split nchan channels into chunks of up to chanchunk core channels, each with a halo
+    of up to halo channels on either side.
+
+    Returns a list of (lo, hi, core_lo, core_hi): the window to load is [lo, hi) and the
+    core channels this chunk is responsible for are [core_lo, core_hi) relative to lo.
+    """
+    chunks = []
+    for c0 in range(0, nchan, chanchunk):
+        c1 = min(c0 + chanchunk, nchan)
+        lo = max(0, c0 - halo)
+        hi = min(nchan, c1 + halo)
+        chunks.append((lo, hi, c0 - lo, c1 - lo))
+    return chunks
+
+
 def main():
 
     timestamp = time.strftime("%d%m%Y_%H%M%S")
@@ -78,7 +95,7 @@ def main():
     parallel_group = parser.add_argument_group('parallelism arguments')
     parallel_group.add_argument('--j', '-j', type=int, default=24, metavar='', help='Number of worker processes (default = 24)')
     parallel_group.add_argument('--chanchunk', type=int, default=128, metavar='', help='Number of channels to load per worker when processing islands (default = 128)')
-    parallel_group.add_argument('--overlap', type=int, default=-1, metavar = '', help='Number of overlapping channels between chunks (default = 2 x minchans)')
+    parallel_group.add_argument('--overlap', type=int, default=-1, metavar = '', help='Halo of extra channels read either side of each chunk; islands are only cut at chunk edges if they extend beyond the halo (default = max(minchans + specdilate, 16))')
 
     parser.add_argument('input_pattern', help='Pattern for the sequence of FITS files to process')
 
@@ -120,7 +137,9 @@ def main():
     chanchunk = args.chanchunk
     overlap = args.overlap
 
-    if overlap == -1: overlap = int(2*minchans)
+    if overlap < 0: overlap = max(minchans + specdilate, 16)
+    if overlap < minchans + specdilate:
+        logger.warning(f'--overlap {overlap} is less than minchans + specdilate ({minchans + specdilate}); filtering near chunk edges may depend on chunking')
 
 
     # Input pattern for FITS files
@@ -136,8 +155,6 @@ def main():
         nfits = len(fits_list)
         logger.info(f'Number of input images ............... : {nfits}')
         if j > nfits: j = nfits
-
-    nchunks = nfits // chanchunk
 
 
     # Create directories
@@ -168,6 +185,7 @@ def main():
     logger.info(f'Overwrite existing files ............. : {"Yes" if overwrite else "No"}')
     logger.info(f'Number of worker processes ........... : {j}')
     logger.info(f'Channels per processing worker ....... : {chanchunk}')
+    logger.info(f'Halo channels either side of chunks .. : {overlap}')
     spacer()
 
     t0 = time.time()
@@ -204,12 +222,13 @@ def main():
         if not mask_list:
             logger.error('No mask images found')
             sys.exit()
-        mask_subsets = [mask_list[i*chanchunk:(i+1)*chanchunk+overlap] for i in range(nchunks-1)] 
-        mask_subsets.append(mask_list[(nchunks-1)*chanchunk:])
+        chunks = channel_chunks(len(mask_list), chanchunk, overlap)
+        mask_subsets = [mask_list[lo:hi] for lo, hi, _, _ in chunks]
         logger.info(f'Filtering masks in {len(mask_subsets)} subset(s)')
         ns = len(mask_subsets)
         iterable_params = zip(
-            mask_subsets, [minchans]*ns, [specdilate]*ns, [masktag]*ns, 
+            mask_subsets, [c[2] for c in chunks], [c[3] for c in chunks],
+            [minchans]*ns, [specdilate]*ns, [masktag]*ns, 
             [filtertag]*ns, [overwrite]*ns, np.arange(ns)
         )
         run_pool(filter_mask, iterable_params, j, 'Mask filtering', logger)
@@ -238,16 +257,17 @@ def main():
         if not mask_list:
             logger.error('No mask images found')
             sys.exit()
-        mask_subsets = [mask_list[i*chanchunk:(i+1)*chanchunk+overlap] for i in range(nchunks-1)] 
-        mask_subsets.append(mask_list[(nchunks-1)*chanchunk:])
-        input_fits_subsets = [orig_list[i*chanchunk:(i+1)*chanchunk+overlap] for i in range(nchunks-1)] 
-        input_fits_subsets.append(orig_list[(nchunks-1)*chanchunk:])
+        nmasks = len(mask_list)
+        chunks = channel_chunks(nmasks, chanchunk, overlap)
+        mask_subsets = [mask_list[lo:hi] for lo, hi, _, _ in chunks]
+        input_fits_subsets = [orig_list[lo:hi] for lo, hi, _, _ in chunks]
         logger.info(f'Source extraction proceeding over {len(mask_subsets)} subset(s)')
 
         ns = len(mask_subsets)
 
         iterable_params = zip(
-            input_fits_subsets, mask_subsets, [opdir]*ns, [catalogue]*ns, [subcubes]*ns, 
+            input_fits_subsets, mask_subsets, [c[2] for c in chunks], [c[3] for c in chunks],
+            [c[0] > 0 for c in chunks], [c[1] < nmasks for c in chunks], [opdir]*ns, [catalogue]*ns, [subcubes]*ns, 
             [submasks]*ns, [padspatial]*ns, [padspectral]*ns, [catname]*ns, [cubetag]*ns,
             [overwrite]*ns, np.arange(ns)
         )

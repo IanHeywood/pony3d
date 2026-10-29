@@ -86,20 +86,33 @@ def flush_image(image_data, header, fits_file):
     return False
 
 
-def load_cube(fits_list):
+def load_cube(fits_list, dtype=None):
     """
     Load a sequence of FITS images into a 3D numpy array.
 
+    The cube is allocated once and filled plane by plane, so peak memory is
+    one cube plus one image (rather than a list of images plus a stacked copy).
+
     Args:
     fits_list (list): List of FITS file paths.
+    dtype: Data type of the returned cube. Default is the dtype of the first image.
+           Use bool for masks, where only non-zero values matter.
 
     Returns:
-    np.array: 3D cube of image data.
+    np.array: 3D cube of image data, shape (y, x, channel).
     """
-    logging.info(f'Forming cube from {fits_list}')
-    temp = [get_image(fits_file)[0] for fits_file in fits_list]
-    logging.info(f'Cube formed from {fits_list}')
-    return np.dstack(temp)
+    logging.info(f'Forming cube from {fits_list[0]} -- {fits_list[-1]} ({len(fits_list)} images)')
+    first_image = get_image(fits_list[0])[0]
+    if dtype is None:
+        dtype = first_image.dtype.newbyteorder('=')
+    cube = np.empty(first_image.shape + (len(fits_list),), dtype=dtype)
+    for i, fits_file in enumerate(fits_list):
+        image = first_image if i == 0 else get_image(fits_file)[0]
+        if image.shape != first_image.shape:
+            raise ValueError(f'{fits_file} has shape {image.shape}, expected {first_image.shape}')
+        cube[:, :, i] = ((image != 0) & ~np.isnan(image)) if dtype == bool else image
+    logging.info(f'Cube formed from {fits_list[0]} -- {fits_list[-1]}')
+    return cube
 
 
 # def load_cube_with_concat(fits_list):

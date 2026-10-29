@@ -6,7 +6,8 @@ Turn a sequence of single-channel FITS images into a 3D spectral FITS cube.
 
 The cube is written one channel at a time, so memory use is a single image
 regardless of the size of the cube. Optionally the cube can be tile-compressed
-(requires fitsio): GZIP_2 is lossless, RICE_1 quantises floating point data.
+(requires fitsio): GZIP_2 is lossless, RICE_1 quantises floating point data. Compression
+stages the channels in a temporary memory-mapped file and compresses it in one write.
 """
 
 import argparse
@@ -105,7 +106,13 @@ def compressed_tile_shape(fits_file):
 
 def write_cube_compressed(fitslist, freqs, outfile, method, qlevel, tile_xy, overwrite=False):
     """
-    Write a tile-compressed float32 cube channel by channel with fitsio.
+    Write a tile-compressed float32 cube with fitsio.
+
+    Writing a lossy (RICE) compressed image piece by piece corrupts it in fitsio / cfitsio
+    (each partial write re-quantises tiles; errors of tens of sigma in tests), so the channels
+    are first streamed into a temporary uncompressed file next to the output, which is then
+    compressed in a single write. The temporary file is memory-mapped, so memory use stays
+    low, but it needs free disk space equal to the uncompressed cube.
 
     The compressed image is stored in the first extension (the primary HDU is empty,
     as the FITS tile-compression convention requires), and the WCS is written there.
@@ -118,6 +125,7 @@ def write_cube_compressed(fitslist, freqs, outfile, method, qlevel, tile_xy, ove
 
     image0, header0 = read_image(fitslist[0])
     ny, nx = image0.shape
+    nchan = len(fitslist)
     header = cube_header(header0, freqs, nx, ny, bitpix=-32)
 
     if os.path.exists(outfile) and not overwrite:
@@ -125,43 +133,38 @@ def write_cube_compressed(fitslist, freqs, outfile, method, qlevel, tile_xy, ove
         sys.exit(1)
 
     tx, ty = (int(s.strip()) for s in tile_xy.split(','))
-    tile_dims = [1, max(1, min(ty, ny)), max(1, min(tx, nx))]  # numpy order: tiles never span channels
+    tile_dims = [1, max(1, min(ty, ny)), max(1, min(tx, nx))]  # numpy order: one channel per tile
+    params = inspect.signature(fitsio.FITS.write).parameters
+    tile_key = 'tile_dims' if 'tile_dims' in params else 'tiledims' # name differs between fitsio versions
 
-    kwargs = dict(dims=[len(fitslist), ny, nx], dtype=np.float32, compress=method, qlevel=qlevel)
-    # The tile size argument is named differently in different fitsio versions
-    params = inspect.signature(fitsio.FITS.create_image_hdu).parameters
-    tile_key = 'tile_dims' if 'tile_dims' in params else 'tiledims'
-
-    # Each tile must hold exactly one channel (ZTILE3 = 1). If a tile spans channels, every
-    # channel write only partly fills it and the tile is re-quantised repeatedly, which
-    # corrupts RICE-compressed data. fitsio versions differ in the axis order they expect
-    # for the tile shape, so check what was created and swap the order if needed.
-    wanted = [tile_dims[2], tile_dims[1], tile_dims[0]]  # FITS order: ZTILE1 (x), ZTILE2 (y), ZTILE3 (chan)
-    got = None
-    for candidate in (tile_dims, wanted):
-        with fitsio.FITS(outfile, mode='rw', clobber=True) as f:
-            f.create_image_hdu(img=None, **kwargs, **{tile_key: candidate})
-        got = compressed_tile_shape(outfile)
-        if got == wanted:
-            break
-    if got != wanted:
-        print(f'Could not create compression tiles of {wanted[0]} x {wanted[1]} x 1 pixels (got {got})')
-        sys.exit(1)
-    print(f'Compression {method}, tiles of {got[0]} x {got[1]} x {got[2]} pixels'
-          + (f', qlevel {qlevel}' if qlevel is not None else ''))
-
-    with fitsio.FITS(outfile, mode='rw') as f:
-        img = f[-1]
+    tmpfile = f'{outfile}.pony3d-tmp.raw'
+    print(f'Staging channels in {tmpfile} ({nchan * ny * nx * 4 / 1e9:.2f} GB, removed afterwards)')
+    try:
+        staged = np.memmap(tmpfile, dtype=np.float32, mode='w+', shape=(nchan, ny, nx))
         for k, fitsfile in enumerate(tqdm(fitslist, desc='Stacking FITS files  ', unit='file')):
             image, _ = read_image(fitsfile)
             if image.shape != (ny, nx):
                 raise ValueError(f'{fitsfile}: expected spatial shape {(ny, nx)}, got {image.shape}')
-            img.write(image.astype(np.float32)[np.newaxis, :, :], start=[k, 0, 0])
+            staged[k] = image
+        staged.flush()
 
-        # WCS and other keywords; structural keywords are managed by fitsio
-        structural = {'SIMPLE', 'BITPIX', 'NAXIS', 'NAXIS1', 'NAXIS2', 'NAXIS3', 'EXTEND'}
-        img.write_keys([{'name': card.keyword, 'value': card.value, 'comment': card.comment}
-                        for card in header.cards if card.keyword and card.keyword not in structural])
+        print(f'Compressing with {method}' + (f', qlevel {qlevel}' if qlevel is not None else ' (lossless)'))
+        with fitsio.FITS(outfile, mode='rw', clobber=True) as f:
+            f.write(staged, compress=method, qlevel=qlevel, **{tile_key: tile_dims})
+            # WCS and other keywords; structural keywords are managed by fitsio
+            structural = {'SIMPLE', 'BITPIX', 'NAXIS', 'NAXIS1', 'NAXIS2', 'NAXIS3', 'EXTEND'}
+            f[-1].write_keys([{'name': card.keyword, 'value': card.value, 'comment': card.comment}
+                              for card in header.cards if card.keyword and card.keyword not in structural])
+        del staged
+    finally:
+        if os.path.exists(tmpfile):
+            os.remove(tmpfile)
+
+    got = compressed_tile_shape(outfile)
+    if got is not None and got[2] != 1:
+        print(f'Warning: compression tiles are {got[0]} x {got[1]} x {got[2]} pixels; expected one channel per tile')
+    elif got is not None:
+        print(f'Compression tiles of {got[0]} x {got[1]} x {got[2]} pixels')
 
 
 def read_textfile(filename):
@@ -218,7 +221,7 @@ def main():
     parser.add_argument('--outfile', type=str, default='', metavar='', help='Name of output FITS cube', required=True)
     parser.add_argument('--compress', type=str, default='none', choices=['none', 'gzip', 'rice'],
                         help='Tile compression, needs fitsio: gzip = GZIP_2, lossless; rice = RICE_1, quantised (lossy) '
-                             'at --qlevel (default = none)')
+                             'at --qlevel. Needs temporary disk space equal to the uncompressed cube (default = none)')
     parser.add_argument('--qlevel', type=float, default=16.0, metavar='',
                         help='Quantisation level for rice compression: values are quantised to the tile noise / qlevel, '
                              'so higher keeps more precision (default = 16; fpack uses 4)')

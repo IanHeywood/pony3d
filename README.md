@@ -107,7 +107,7 @@ Each cube worker writes only its own core channels, and an island is extracted b
 
 Installing pony3d also installs these commands:
 
-* `pony3d-makecube`: stack a sequence of single-channel images into a FITS cube. The cube is written one channel at a time, so memory use is one image whatever the cube size. `--compress gzip` (lossless) or `--compress rice` (quantised, see `--qlevel`) writes a tile-compressed cube, and needs `pip install pony3d[compress]`
+* `pony3d-makecube`: stack a sequence of single-channel images into a FITS cube. The cube is written one channel at a time, so memory use is one image whatever the cube size. `--compress gzip` (lossless) or `--compress rice` (quantised, see `--qlevel`) writes a tile-compressed cube, and needs `pip install pony3d[compress]`. Compression stages the channels in a temporary uncompressed file next to the output, so it needs free disk space equal to the uncompressed cube
 * `pony3d-breakcube`: split a FITS cube into one image per channel, carrying across CASA per-channel beams
 * `pony3d-contsub`: image-domain continuum subtraction for a cube or an image sequence
 * `pony3d-movie`: render an MP4 of a channel sequence, optionally with mask contours; needs `pip install pony3d[tools]`

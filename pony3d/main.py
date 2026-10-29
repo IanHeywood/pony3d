@@ -3,6 +3,7 @@
 
 
 import argparse
+import logging
 import os
 import sys
 import glob
@@ -22,7 +23,10 @@ def run_pool(func, iterable_params, processes, stage, logger, maxtasksperchild=N
     Any exception raised in a worker is logged with its traceback and the run is stopped,
     rather than being silently swallowed.
     """
-    with Pool(processes=processes, maxtasksperchild=maxtasksperchild) as pool:
+    logfiles = [h.baseFilename for h in logger.handlers if isinstance(h, logging.FileHandler)]
+    initargs = (logfiles[0],) if logfiles else (None,)
+    with Pool(processes=processes, maxtasksperchild=maxtasksperchild,
+              initializer=initialize_logging, initargs=initargs) as pool:
         try:
             return pool.starmap(func, iterable_params)
         except Exception:

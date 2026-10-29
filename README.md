@@ -20,49 +20,102 @@ pip install pony3d
 
 ## Command line options
 
-Note that `input_image(s)` is a pattern. Specifying `my_images` will return a naturally-sorted list of all files in the current directory that match `*my_images*`. 
+Note that `input_pattern` is a pattern. Specifying `my_images` will return a naturally-sorted list of all files in the current directory that match `*my_images*`.
 
 ```
-Usage: pony3d [options] input_image(s)
+usage: pony3d [-h] [--threshold ] [--boxsize ] [--trim ] [--regionmask ] [--invert] [--minchans ]
+              [--dilate ] [--specdilate ] [--boxcar ] [--catalogue] [--subcubes] [--submasks]
+              [--padspatial ] [--padspectral ] [--saveaverage] [--savenoise] [--opdir ]
+              [--masktag ] [--noisetag ] [--averagetag ] [--filtertag ] [--cubetag ] [--catname ]
+              [--force] [--j ] [--jcube ] [--memlimit ] [--chanchunk ] [--overlap ]
+              input_pattern
 
-Options:
-  -h, --help            show this help message and exit
-  --threshold=T         Sigma threshold for masking (default = 5.0)
-  --boxsize=B           Box size to use for background noise estimation
-                        (default = 80)
-  --dilate=D            Number of iterations of binary dilation in the spatial
-                        dimensions (default = 5, set to 0 to disable)
-  --specdilate=S        Number of iterations of binary dilation in the
-                        spectral dimension (default = 2, set to 0 to disable,
-                        filtering must be enabled)
-  --chanaverage=N       Width sliding channel window to use when making masks
-                        (odd numbers preferred, default = 1, i.e. no
-                        averaging)
-  --saveaverage         Save the result of the sliding average (default = do
-                        not save averaged image)
-  --chanchunk=M         Number of channels to load per worker when filtering
-                        single channel instances (default = 16)
-  --nofilter            Do not filter detections for single channel instances
-                        (default = filtering enabled)
-  --nocount             Do not report island counts and input RMS in the log
-                        (default = report values)
-  --savenoise           Enable to export noise images as FITS files (default =
-                        do not save noise images)
-  --invert              Multiply images by -1 prior to masking (default = do
-                        not invert images)
-  --opdir=OPDIR         Name of folder for output products (default = auto
-                        generated)
-  --masktag=MASKTAG     Suffix and subfolder name for mask images (default =
-                        mask)
-  --noisetag=NOISETAG   Suffix and subfolder name for noise images (default =
-                        noise)
-  --averagetag=AVERAGETAG
-                        Suffix and subfolder name for boxcar averaged images
-                        (default = avg)
-  --filtertag=FILTERTAG
-                        Suffix and subfolder name for filtered images (default
-                        = filtered)
-  -f, --force           Overwrite existing FITS outputs (default = do not
-                        overwrite)
-  -j J                  Number of worker processes (default = 24)
-  ```
+Parallelised production of deconvolution masks, and 3D source-finding
+
+positional arguments:
+  input_pattern   Pattern for the sequence of FITS files to process
+
+options:
+  -h, --help      show this help message and exit
+
+detection arguments:
+  --threshold     Sigma threshold for masking (default = 5.0)
+  --boxsize       Box size for background noise estimation (default = 150)
+
+image pre-processing arguments:
+  --trim          Trim this number of pixels from any NaN boundaries to avoid noisy edges (default
+                  = 0)
+  --regionmask    Provide a region file that defines areas to exclude from the subsequent
+                  processing
+  --invert        Multiply images by -1 prior to processing (default = do not invert images)
+
+processing arguments:
+  --minchans      Minimum number of contiguous channels that an island must have to be retained
+                  (must be less than chanchunk-2; default = 3)
+  --dilate        Iterations of dilation in spatial dimensions (default = 3, set to 0 to disable)
+  --specdilate    Iterations of dilation in the spectral dimension (default = 3, set to 0 to
+                  disable)
+  --boxcar        Width of boxcar window to apply (odd numbers preferred, default = 1, i.e., no
+                  averaging)
+
+island extraction arguments:
+  --catalogue     Write out the 3D locations of each island (default = do not write catalogue)
+  --subcubes      Produce 3D FITS sub-cubes from the data for each island (default = do not
+                  produce)
+  --submasks      Produce 3D FITS sub-cubes of the mask for each island (increases memory
+                  footprint; default = do not produce)
+  --padspatial    Pad the subcube spatial dimensions around each island with this number of pixels
+                  (default = 50)
+  --padspectral   Pad the subcube spectral dimensions around each island with this number of
+                  channels (default = 10)
+
+output arguments:
+  --saveaverage   Save the boxcar-averaged images (default = do not save)
+  --savenoise     Enable to export noise images as FITS files (default = do not save)
+  --opdir         Name of folder for output products (default = auto generated)
+  --masktag       Suffix and subfolder name for mask images (default = mask)
+  --noisetag      Suffix and subfolder name for noise images (default = noise)
+  --averagetag    Suffix and subfolder name for boxcar averaged images (default = boxavg)
+  --filtertag     Suffix and subfolder name for filtered images (default = filtered)
+  --cubetag       Suffix and folder name for subcubes (default = subcubes)
+  --catname       Filename for output catalogue (default = auto generated)
+  --force         Overwrite existing FITS outputs (default = do not overwrite)
+
+parallelism arguments:
+  --j, -j         Number of worker processes for the per-channel stages: mask making and island
+                  counting (default = 24)
+  --jcube         Number of worker processes for the cube stages: filtering and extraction
+                  (default = smallest of number of chunks, -j, and the number of workers that fit
+                  in memory)
+  --memlimit      Memory (GB) available to cube workers, used to choose --jcube (default = detect)
+  --chanchunk     Number of channels to load per worker when processing islands (default = 128)
+  --overlap       Halo of extra channels read either side of each chunk; islands are only cut at
+                  chunk edges if they extend beyond the halo (default = max(minchans + specdilate,
+                  16))
+```
+
+## Parallelism and memory
+
+Processing runs in two kinds of stage:
+
+* **Per-channel stages** (mask making, island counting) work on one image at a time. They are limited by CPU and disk throughput, and use `-j` workers.
+* **Cube stages** (filtering, extraction) load chunks of `--chanchunk` channels, plus a halo of `--overlap` channels either side, as 3D arrays. They are limited by memory. `--jcube` sets the number of workers; by default it is the smallest of the number of chunks, `-j`, and the number of workers that fit in the available memory (detected, or set with `--memlimit`). The estimate is written to the log.
+
+Each cube worker writes only its own core channels, and an island is extracted by the chunk containing its first channel, so results do not depend on the chunk size as long as `--overlap` is at least `minchans + specdilate` (for filtering) and longer than the spectral extent of the islands (for extraction; a warning is logged otherwise).
+
+## Tools
+
+The `tools/` folder has standalone scripts (install their extra dependencies with `pip install pony3d[tools]`):
+
+* `make-cube.py`: stack a sequence of images into a FITS cube
+* `break-cube.py`: split a FITS cube into one image per channel, carrying across CASA per-channel beams
+* `imcontsub.py`: image-domain continuum subtraction for a cube or an image sequence
+* `pony-movie.py`: render an MP4 of a channel sequence, optionally with mask contours
+
+## Testing
+
+`tests/run_test.py` makes a small synthetic image sequence with injected 3D sources, runs `pony3d` on it with several chunk sizes, and checks that the sources are recovered and that the results do not depend on chunking:
+
+```
+python tests/run_test.py
+```

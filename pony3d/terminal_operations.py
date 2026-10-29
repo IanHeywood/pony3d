@@ -3,16 +3,22 @@ import random
 from datetime import datetime
 from pony3d import __version__
 
-def initialize_logging():
+def initialize_logging(logfile=None):
     """
     Initialize and configure the logger.
+
+    Args:
+    logfile (str): Log file to append to (default = new timestamped file).
+                   Worker processes pass the parent's log file, so that logging also
+                   works when multiprocessing uses 'spawn' (the macOS default).
 
     Returns:
     logging.Logger: Configured logger instance.
     """
-    date_time = datetime.now()
-    timestamp = date_time.strftime('%d%m%Y_%H%M%S')
-    logfile = f'pony3d_{timestamp}.log'
+    if logfile is None:
+        date_time = datetime.now()
+        timestamp = date_time.strftime('%d%m%Y_%H%M%S')
+        logfile = f'pony3d_{timestamp}.log'
 
     logging.basicConfig(
         filename=logfile, level=logging.DEBUG,

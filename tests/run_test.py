@@ -191,7 +191,7 @@ def main():
 
     print('Checking detections in the single-chunk run')
     c.check(len(ref_cat) == len(SOURCES), f'{len(ref_cat)} catalogue entries (expected {len(SOURCES)})')
-    cat_coords = SkyCoord([r[1] for r in ref_cat], [r[2] for r in ref_cat], unit=(u.hourangle, u.deg)) if ref_cat else None
+    cat_coords = SkyCoord([r[1] for r in ref_cat], [r[2] for r in ref_cat], unit=(u.deg, u.deg)) if ref_cat else None
     for (x, y, c0, c1, peak) in SOURCES:
         ra, dec = w2.pixel_to_world_values(x, y)
         src = SkyCoord(ra * u.deg, dec * u.deg)
@@ -228,7 +228,12 @@ def main():
                    if pos.separation(SkyCoord(*w2.pixel_to_world_values(s[0], s[1]), unit='deg')).arcsec < 2 * PIX_DEG * 3600]
         ok = (data.ndim == 3 and wsc.naxis == 3 and len(matches) == 1
               and FREQ0 + (matches[0][2] - 0.5) * DF <= freq <= FREQ0 + (matches[0][3] + 0.5) * DF)
-        c.check(ok, f'{os.path.basename(sc)}: shape {data.shape}, peak maps to a source position and channel range')
+        detail = f'peak at chan {(freq - FREQ0) / DF:.1f} of the input'
+        if matches:
+            detail += f', source chans {matches[0][2]}-{matches[0][3]}'
+        else:
+            detail += f', no source within {2 * PIX_DEG * 3600:.0f}" of the peak position'
+        c.check(ok, f'{os.path.basename(sc)}: shape {data.shape}, {detail}')
         c.check(all(k in hdr for k in ('BMAJ', 'BMIN', 'BPA', 'BUNIT')), f'{os.path.basename(sc)}: beam and units in header')
 
     print('Running pony3d with boxcar averaging')

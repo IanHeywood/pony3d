@@ -501,13 +501,17 @@ def extract_islands(image_subset, mask_subset, core_lo, core_hi, truncated_lo, t
             if submasks:
                 labeled_sub_cube_data = np.transpose(labeled_cube[expanded_bbox], (2, 0, 1))
 
-            # Header: slice the WCS so CRPIX follows the cut-out (numpy axis order)
+            # Header: WCS with CRPIX following the cut-out
             ch_mid = (cs.start + cs.stop - 1) // 2
             dummy_img, mid_header = get_image(image_subset[ch_mid])
-            if cube_wcs is not None:
-                header = cube_wcs.slice((cs, ys, xs)).to_header()
-            else:
-                header = celestial_wcs.slice((ys, xs)).to_header()
+            # Shift the reference pixel by the cut-out offsets explicitly. (WCS.slice clips
+            # offsets to the pixel shape of the header, which is 1 along the spectral axis
+            # of a single-channel image, so the frequency axis was not shifted.)
+            sub_wcs = (cube_wcs if cube_wcs is not None else celestial_wcs).deepcopy()
+            offsets = (xs.start, ys.start, cs.start)[:sub_wcs.naxis]
+            for axis, offset in enumerate(offsets):
+                sub_wcs.wcs.crpix[axis] -= offset
+            header = sub_wcs.to_header()
             # Carry across beam, units and other useful keywords from the central channel
             for key in ('BUNIT', 'BMAJ', 'BMIN', 'BPA', 'BTYPE', 'OBJECT', 'TELESCOP', 'OBSERVER', 'DATE-OBS', 'RESTFRQ', 'SPECSYS'):
                 if key in mid_header:

@@ -413,10 +413,12 @@ def extract_islands(image_subset, mask_subset, core_lo, core_hi, truncated_lo, t
     logging.info(f'[{log_prefix}_{idx}] Reading filtered mask subset')
     cube = load_cube(mask_subset, dtype=bool)
 
-    dummy_img, header = get_image(mask_subset[0])
+    dummy_img, header = get_image(image_subset[0])
     wcs = WCS(header)
-    freq0 = header.get('CRVAL3')
+    celestial_wcs = wcs.celestial # RA/Dec only, works for 2, 3 or 4 axis headers
+    # Frequency of channel 0 of the subset (allowing for CRPIX3 != 1)
     df = header.get('CDELT3')
+    freq0 = header.get('CRVAL3') + (1 - header.get('CRPIX3', 1)) * df
 
     # Label the cube and free up the RAM used by the boolean array and the template FITS image
     labeled_cube, n_islands = label(cube)
@@ -443,7 +445,7 @@ def extract_islands(image_subset, mask_subset, core_lo, core_hi, truncated_lo, t
             sub_array = labeled_cube[bbox]
             com = center_of_mass(sub_array == region_idx)
             com = tuple(c + s.start for c, s in zip(com, bbox))
-            ra, dec, xxx = wcs.pixel_to_world_values(com[1],com[0],0)
+            ra, dec = celestial_wcs.pixel_to_world_values(com[1],com[0])
             ra = round(float(ra),5)
             dec = round(float(dec),5)
             ra_hms, dec_dms, src_id = format_ra_dec(ra,dec)
@@ -453,7 +455,7 @@ def extract_islands(image_subset, mask_subset, core_lo, core_hi, truncated_lo, t
             f_com = round(((freq0+(ch_com*df))/1e6),3)
             z_com = round(((f_hi/f_com) - 1.0),4)
             ch0 = bbox[2].start 
-            ch1 = bbox[2].stop
+            ch1 = bbox[2].stop - 1 # last channel of the island (stop is exclusive)
             f0 = (freq0+(ch0*df))/1e6
             f1 = (freq0+(ch1*df))/1e6
             com_fits = image_subset[round(ch_com)].split('/')[-1]
@@ -473,68 +475,53 @@ def extract_islands(image_subset, mask_subset, core_lo, core_hi, truncated_lo, t
     if subcubes:
         logging.info(f'[{log_prefix}_{idx}] Reading input image subset')
         data_cube = load_cube(image_subset)
-        nchan = len(image_subset)
+
+        # 3D WCS (RA, Dec, Freq) for the subset, dropping any Stokes axis.
+        # Channel 0 of the subset is the reference channel of the first image.
+        cube_wcs = wcs.sub(['celestial', 'spectral'])
+        if cube_wcs.naxis != 3:
+            cube_wcs = None # no spectral axis in the header, write a 2D WCS
 
         for src in range(0,len(src_ids)):
             src_id = src_ids[src]
             logging.info(f'[{log_prefix}_{idx}] Writing subcube for {src_id}')
             bbox = src_bboxes[src]
-            centre_index = tuple((s.start + s.stop - 1) // 2 for s in bbox)
-            ra, dec, xxx = wcs.pixel_to_world_values(centre_index[1],centre_index[0],0)
-            ch0 = np.max((0,bbox[2].start))
-            ch1 = np.min((bbox[2].stop,nchan))
-            ch_mid = (ch0 + ch1 - 1) // 2
 
-            sub_f0 = freq0 + (ch0*df)
+            # Apply padding to the bounding box, clipped to the data
+            pads = (padspatial, padspatial, padspectral)
+            expanded_bbox = tuple(
+                slice(max(0, s.start - pad), min(s.stop + pad, data_cube.shape[i]))
+                for i, (s, pad) in enumerate(zip(bbox, pads))
+            )
+            ys, xs, cs = expanded_bbox
 
-            # Apply padding to bounding boxes if requested
-            if padspatial != 0 or padspectral != 0:
-                expanded_bbox = []
-                for i, s in enumerate(bbox):
-                    if i in (0, 1): 
-                        expand = padspatial
-                    elif i == 2: 
-                        expand = padspectral
-                    new_start = max(0, s.start - expand)  # Ensure start is not negative
-                    new_stop = s.stop + expand
-                    new_stop = min(new_stop, data_cube.shape[i])
-                    expanded_bbox.append(slice(new_start, new_stop))
-            else:
-                expanded_bbox = bbox
-            expanded_bbox = tuple(expanded_bbox)
-            sub_cube_data = data_cube[expanded_bbox]
-            sub_cube_data = np.transpose(sub_cube_data, (2, 1, 0)) # because why?
+            # Cube is (y, x, chan); FITS wants numpy order (chan, y, x)
+            sub_cube_data = np.transpose(data_cube[expanded_bbox], (2, 0, 1))
 
             if submasks:
-                labeled_sub_cube_data = labeled_cube[expanded_bbox]
-                labeled_sub_cube_data = np.transpose(labeled_sub_cube_data, (2, 1, 0))
+                labeled_sub_cube_data = np.transpose(labeled_cube[expanded_bbox], (2, 0, 1))
 
-            dummy_img, header = get_image(image_subset[ch_mid])
-
-            # Sort out cube headers
-            if 'CASAMBM' in header:
-                header.remove('CASAMBM')
-            header.remove('COMMENT', remove_all=True)
-            header['CRVAL1'] = float(ra)  # RA reference value
-            header['CRPIX1'] = int(centre_index[1] - bbox[1].start)  # Adjust RA reference pixel
-            header['CRVAL2'] = float(dec)  # Dec reference value
-            header['CRPIX2'] = int(centre_index[0] - bbox[0].start)  # Adjust Dec reference pixel
-            header['CRVAL3'] = float(sub_f0)
-            header['CRPIX3'] = 1 
+            # Header: slice the WCS so CRPIX follows the cut-out (numpy axis order)
+            ch_mid = (cs.start + cs.stop - 1) // 2
+            dummy_img, mid_header = get_image(image_subset[ch_mid])
+            if cube_wcs is not None:
+                header = cube_wcs.slice((cs, ys, xs)).to_header()
+            else:
+                header = celestial_wcs.slice((ys, xs)).to_header()
+            # Carry across beam, units and other useful keywords from the central channel
+            for key in ('BUNIT', 'BMAJ', 'BMIN', 'BPA', 'BTYPE', 'OBJECT', 'TELESCOP', 'OBSERVER', 'DATE-OBS', 'RESTFRQ', 'SPECSYS'):
+                if key in mid_header:
+                    header[key] = mid_header[key]
             header['COMMENT'] = f'{src_id}'
             header['COMMENT'] = f'pony3d-{__version__}'
-     
+
             subcube_fits_file = os.path.join(opdir, cubetag, f'pony3d_{src_id}_subcube.fits')
             f_written = flush_image(sub_cube_data, header, subcube_fits_file)
             if not f_written:
                 logging.error(f'Failed to write FITS file: sub_cube_data file {subcube_fits_file}')
-    
+
             if submasks:
                 labeled_subcube_fits_file = os.path.join(opdir, cubetag, f'pony3d_{src_id}_subcube_label.fits')
                 f_written = flush_image(labeled_sub_cube_data, header, labeled_subcube_fits_file)
                 if not f_written:
                     logging.error(f'Failed to write FITS file: labeled_sub_cube_data file {labeled_subcube_fits_file}')
-
-
-
-

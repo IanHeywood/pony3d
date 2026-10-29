@@ -53,8 +53,9 @@ def make_fits_cube(fitslist, output_filename):
     print(f"Writing output cube: {output_filename}")
     # Create new 3D WCS header
     new_wcs = WCS(naxis=3)
-    new_wcs.wcs.ctype = ['RA---SIN', 'DEC--SIN', 'FREQ']
-    new_wcs.wcs.cunit = ['deg', 'deg', 'Hz']
+    # Take the projection from the input images rather than assuming one
+    new_wcs.wcs.ctype = [base_header.get('CTYPE1', 'RA---SIN'), base_header.get('CTYPE2', 'DEC--SIN'), 'FREQ']
+    new_wcs.wcs.cunit = [base_header.get('CUNIT1', 'deg'), base_header.get('CUNIT2', 'deg'), 'Hz']
     new_wcs.wcs.crpix = [base_header['CRPIX1'], base_header['CRPIX2'], 1]
     new_wcs.wcs.cdelt = [base_header['CDELT1'], base_header['CDELT2'], np.mean(np.diff(freqs)) if len(freqs) > 1 else 1.0]
     new_wcs.wcs.crval = [base_header['CRVAL1'], base_header['CRVAL2'], freqs[0]]
@@ -65,6 +66,12 @@ def make_fits_cube(fitslist, output_filename):
     cube_header['NAXIS1'] = spatial_shape[1]
     cube_header['NAXIS2'] = spatial_shape[0]
     cube_header['NAXIS3'] = num_files
+
+    # Carry across beam, units, reference frames and other useful keywords
+    for key in ('BUNIT', 'BMAJ', 'BMIN', 'BPA', 'BTYPE', 'RADESYS', 'EQUINOX', 'SPECSYS', 'RESTFRQ',
+                'OBJECT', 'TELESCOP', 'OBSERVER', 'DATE-OBS', 'OBSRA', 'OBSDEC'):
+        if key in base_header:
+            cube_header[key] = base_header[key]
 
     # Write the stacked cube to FITS
     hdu = fits.PrimaryHDU(data=cube_data, header=cube_header)
@@ -77,10 +84,6 @@ def read_textfile(filename):
     with open(filename, 'r') as f:
         return [line.strip() for line in f if line.strip()]
 
-
-from astropy.io import fits
-import numpy as np
-import sys
 
 def sort_by_freq(fitslist):
     """

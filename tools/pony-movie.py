@@ -8,6 +8,7 @@ import glob
 import matplotlib.pyplot as plt
 import numpy as np
 import os
+import re
 import sys
 import tempfile
 from astropy.io import fits
@@ -33,14 +34,11 @@ def render_png(fits_image_path, mask_fits_path, pixmin, pixmax, png_name, ccol, 
         data = hdul[0].data
         hdr = hdul[0].header
         freq = hdr.get('CRVAL3')    
-    if data.ndim == 3:
-        data = data[0]
+    data = np.squeeze(data) # drop degenerate frequency / Stokes axes
     if mask_fits_path != '':
         with fits.open(mask_fits_path) as hdul_mask:
             mask = hdul_mask[0].data    
-        if mask.ndim == 3:
-            mask = mask[0]   
-        mask = mask.astype(bool)    
+        mask = np.squeeze(mask).astype(bool)    
         if data.shape != mask.shape:
             print("FITS image and mask dimensions do not match")
             sys.exit()
@@ -49,7 +47,7 @@ def render_png(fits_image_path, mask_fits_path, pixmin, pixmax, png_name, ccol, 
     fig.patch.set_facecolor('black')  
     ax.set_facecolor('black') 
     if pixmin == 0: pixmin = np.nanmin(data)
-    if pixmax == 0: pixmax = np.nanmin(data)
+    if pixmax == 0: pixmax = np.nanmax(data)
     ax.imshow(data, cmap='gray', origin='lower', vmin=pixmin, vmax=pixmax)
     if mask_fits_path != '':
         ax.contour(mask, colors=ccol, linewidths=0.3, levels=[0.5])    
@@ -99,6 +97,12 @@ def process_frame(i, datafits, maskfits, output_png, nframes, pixmin, pixmax, cc
     print(f'Processing: {datafits} {maskfits}')
     freq = render_png(datafits, maskfits, pixmin, pixmax, output_png, ccol, inch_size=(7,7), dpi=300)
     annotate_png(output_png, datafits, freq, i, nframes, nolabel, fontpath, fontsize,)
+
+
+def natural_sort(l):
+    """Sort strings the way humans expect (channel 10 after channel 9)."""
+    convert = lambda text: int(text) if text.isdigit() else text.lower()
+    return sorted(l, key=lambda key: [convert(c) for c in re.split('([0-9]+)', key)])
 
 
 def get_png_size(png_file):
@@ -163,7 +167,7 @@ def main():
     parser.add_argument('--fontpath', type=str, default='/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf', metavar='', help='Font (default = /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf)')
     parser.add_argument('--fontsize', type=int, default='18', metavar='', help='Font size (default = 18)')
     parser.add_argument('--nolabel', default=False, action='store_true', help='Do not add annotations')
-    parser.add_argument('--fps', type=int, default=12, metavar='', help='Frames per second (default = 10)')
+    parser.add_argument('--fps', type=int, default=12, metavar='', help='Frames per second (default = 12)')
     parser.add_argument('--renderer', type=str, default='opencv', metavar='', help='Select either "opencv" or "ffmpeg" to render movie, latter must be in path (default = opencv)')
     parser.add_argument('--nomovie', default=False, action='store_true', help='Do not create movie file (default = create movie)')
     parser.add_argument('--nopngs', default=False, action='store_true', help='Do not create PNG files (e.g. for remaking movie from existing set; default = create PNGs)')
@@ -195,8 +199,8 @@ def main():
         print("Please specify an output filename")
         sys.exit()
 
-    f_list = sorted(glob.glob(imagepath+'/*.fits'))
-    m_list = sorted(glob.glob(maskpath+'/*.fits'))
+    f_list = natural_sort(glob.glob(os.path.join(imagepath, '*.fits')))
+    m_list = natural_sort(glob.glob(os.path.join(maskpath, '*.fits'))) if maskpath else []
     if len(m_list) == 0:
         plotmasks = False
     else:
@@ -229,13 +233,12 @@ def main():
         tasks.append((i, datafits, maskfits, output_png, nfits, pixmin, pixmax, ccol, fontpath, fontsize, nolabel))
 
     if not nopngs:
-        pool = Pool(processes=j)
-        pool.starmap(process_frame, tasks)
+        with Pool(processes=j) as pool:
+            pool.starmap(process_frame, tasks)
 
     if not nomovie:
         # Make movie
-        png_list = sorted(glob.glob(f'{opdir}/*png'))
-        cwd = os.getcwd()
+        png_list = natural_sort(glob.glob(f'{opdir}/*png'))
         print(f'Using {renderer} to write {outfile}')
         if renderer == 'opencv':
             make_cv2_video(png_list, outfile, fps)
@@ -247,7 +250,7 @@ def main():
                 temp_name = temp_file.name
                 
                 for pp in png_list:
-                    temp_file.write(f"file '{cwd}/{pp}'\n")
+                    temp_file.write(f"file '{os.path.abspath(pp)}'\n")
             print(f'Wrote {temp_name} for ffmpeg')
             #syscall = f'ffmpeg -r {fps} -s {frame} -f concat -safe 0 -i {temp_name} -vcodec libx264 -crf 25 -pix_fmt yuv420p {outfile}'
             syscall = f'ffmpeg -r {fps} -f concat -safe 0 -i {temp_name} -vf "scale=trunc({width}/2)*2:trunc({height}/2)*2" -vcodec libx264 -crf 25 -pix_fmt yuv420p {outfile}'

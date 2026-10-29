@@ -1,6 +1,9 @@
-astropy
 numpy
 scipy
+astropy
 regions
-opencv-python
+# tools/ only
+tqdm
 matplotlib
+opencv-python
+Pillow

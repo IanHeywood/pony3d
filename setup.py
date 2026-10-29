@@ -15,15 +15,17 @@ setup(
         'License :: OSI Approved :: GNU General Public License v3 (GPLv3)',
         'Operating System :: OS Independent',
     ],
-    python_requires='>=3.6',
+    python_requires='>=3.8',
     install_requires=[
         'numpy',
         'scipy',
         'astropy',
         'regions',
-        'opencv-python',
-        'matplotlib',
     ],
+    extras_require={
+        # Dependencies of the scripts in tools/
+        'tools': ['tqdm', 'matplotlib', 'opencv-python', 'Pillow'],
+    },
     entry_points={
         'console_scripts': [
             'pony3d=pony3d.main:main',

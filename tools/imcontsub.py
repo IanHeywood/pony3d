@@ -10,6 +10,7 @@ import sys
 import time
 import warnings
 import glob
+import re
 
 from astropy.io import fits
 from astropy.stats import sigma_clip
@@ -34,134 +35,101 @@ def initialize_logging():
     return logger
 
 
+def natural_sort(l):
+    """Sort strings the way humans expect (channel 10 after channel 9)."""
+    convert = lambda text: int(text) if text.isdigit() else text.lower()
+    return sorted(l, key=lambda key: [convert(c) for c in re.split('([0-9]+)', key)])
+
+
 def load_cube(input_fits):
-    """Loads a 3D FITS cube."""
+    """
+    Loads a FITS cube as a 3D (chan, y, x) float32 array.
+    Degenerate axes (e.g. a length-1 Stokes axis) are dropped; the original
+    shape is returned so the output can be written in the same layout.
+    """
     with fits.open(input_fits) as hdul:
         data = hdul[0].data
-        return np.squeeze(data)
+        shape = data.shape
+        cube = np.squeeze(data).astype(np.float32)
+    if cube.ndim != 3:
+        raise ValueError(f'{input_fits} does not contain a 3D cube (shape {shape})')
+    return cube, shape
 
 
-def load_images(image_pattern):
-    """Loads a sequence of 2D FITS images into a 3D cube."""
-    image_files = sorted(glob.glob(image_pattern))  # Sort to ensure correct order
-    if not image_files:
-        raise FileNotFoundError(f"No FITS files found matching pattern: {image_pattern}")
-    
-    # Read first image to get dimensions
-    with fits.open(image_files[0]) as hdul:
-        shape = hdul[0].data.shape
-    
-    # Create 3D cube
-    cube = np.zeros((len(image_files), *shape), dtype=np.float32)
-
-    for i, file in enumerate(image_files):
-        with fits.open(file) as hdul:
-            cube[i, :, :] = hdul[0].data
-
-    return cube, image_files  # Return file list to use as template for writing
+def image_shape(fits_file):
+    """Shape of the 2D image in fits_file, ignoring degenerate axes."""
+    with fits.open(fits_file, memmap=True) as hdul:
+        return np.squeeze(hdul[0].data).shape
 
 
-def load_image_chunk(image_files, chunk_idx, chunk_size, total_chunks, overlap=5):
+def load_image_chunk(image_files, chunk_idx, chunk_size):
     """
-    Loads a chunk of a sequence of 2D FITS images into a 3D cube for processing, handling edge overlaps.
+    Loads one spatial chunk of a sequence of 2D FITS images into a (chan, y, x) cube.
+
+    Spectra are processed independently, so chunks do not need to overlap.
 
     Parameters:
-    - image_files: List of input image file paths.
+    - image_files: List of input image file paths, in frequency order.
     - chunk_idx: Index of the current chunk.
-    - chunk_size: Number of divisions along RA/Dec.
-    - total_chunks: Total number of chunks.
-    - overlap: Number of pixels to overlap at chunk boundaries to avoid missing spectra.
+    - chunk_size: Number of divisions along each spatial axis.
 
     Returns:
-    - cube: 3D NumPy array of the selected chunk.
-    - template_files: List of image filenames for writing.
-    - chunk_slices: The spatial slice indices for updating the output files.
+    - cube_chunk: 3D NumPy array of the selected chunk.
+    - chunk_slices: (y_slice, x_slice) of the chunk within the full image.
     """
+    ny, nx = image_shape(image_files[0])
+    y_chunks = np.array_split(np.arange(ny), chunk_size)
+    x_chunks = np.array_split(np.arange(nx), chunk_size)
+    y_idx = chunk_idx // chunk_size
+    x_idx = chunk_idx % chunk_size
+    y_slice = slice(y_chunks[y_idx][0], y_chunks[y_idx][-1] + 1)
+    x_slice = slice(x_chunks[x_idx][0], x_chunks[x_idx][-1] + 1)
 
-    image_files = sorted(image_files)  # Ensure correct order
-
-    # Read first image to get full dimensions
-    with fits.open(image_files[0]) as hdul:
-        full_shape = hdul[0].data.shape  # (RA, Dec)
-
-    ra_chunks = np.array_split(range(full_shape[0]), chunk_size)
-    dec_chunks = np.array_split(range(full_shape[1]), chunk_size)
-
-    # Determine chunk indices
-    ra_idx = chunk_idx % chunk_size
-    dec_idx = chunk_idx // chunk_size
-
-    # Get start/stop indices for the chunk
-    ra_start, ra_end = ra_chunks[ra_idx][0], ra_chunks[ra_idx][-1] + 1
-    dec_start, dec_end = dec_chunks[dec_idx][0], dec_chunks[dec_idx][-1] + 1
-
-    # Expand the chunk slightly for overlap handling
-    ra_start = max(0, ra_start - overlap)
-    ra_end = min(full_shape[0], ra_end + overlap)
-    dec_start = max(0, dec_start - overlap)
-    dec_end = min(full_shape[1], dec_end + overlap)
-
-    ra_slice = slice(ra_start, ra_end)
-    dec_slice = slice(dec_start, dec_end)
-
-    # Load only the relevant chunk into memory
-    cube_chunk = np.zeros((len(image_files), ra_end - ra_start, dec_end - dec_start), dtype=np.float32)
-
+    cube_chunk = np.zeros((len(image_files), y_slice.stop - y_slice.start, x_slice.stop - x_slice.start), dtype=np.float32)
     for i, file in enumerate(image_files):
-        with fits.open(file) as hdul:
-            cube_chunk[i, :, :] = hdul[0].data[ra_slice, dec_slice]
+        with fits.open(file, memmap=True) as hdul:
+            image = np.squeeze(hdul[0].data)
+            if image.shape != (ny, nx):
+                raise ValueError(f'{file} has shape {image.shape}, expected {(ny, nx)}')
+            cube_chunk[i, :, :] = image[y_slice, x_slice]
 
-    return cube_chunk, image_files, (ra_slice, dec_slice)
+    return cube_chunk, (y_slice, x_slice)
 
 
-
-def write_cube(data_array, output_fits, input_fits, overwrite):
-    """Writes a 3D FITS cube."""
-    with fits.open(input_fits) as hdul:
-        header = hdul[0].header
-    hdu = fits.PrimaryHDU(data_array, header=header)
+def write_cube(data_array, shape, output_fits, input_fits, overwrite):
+    """Writes a 3D FITS cube with the header (and axis layout) of the input cube."""
+    header = fits.getheader(input_fits)
+    hdu = fits.PrimaryHDU(data_array.reshape(shape), header=header)
     hdu.writeto(output_fits, overwrite=overwrite)
 
 
-def write_images(data_array, template_files, overwrite):
-    """Writes out a sequence of 2D FITS images, replacing .fits with .contsub.fits if no output prefix is provided."""
-    for i, filename in enumerate(template_files):
-        output_filename = filename.replace(".fits", ".contsub.fits")
+def output_name(filename, outdir):
+    """Output name for an input image: .fits -> .contsub.fits, optionally in outdir."""
+    base = os.path.basename(filename)
+    base = base[:-5] + '.contsub.fits' if base.endswith('.fits') else base + '.contsub.fits'
+    return os.path.join(outdir if outdir else os.path.dirname(filename), base)
+
+
+def create_output_images(template_files, outdir, overwrite):
+    """Creates NaN-filled output images with the same header and shape as each input."""
+    for filename in template_files:
+        output_filename = output_name(filename, outdir)
+        if os.path.exists(output_filename) and not overwrite:
+            raise FileExistsError(f'{output_filename} exists, use --overwrite')
         with fits.open(filename) as hdul:
             header = hdul[0].header
-        hdu = fits.PrimaryHDU(data_array[i, :, :], header=header)
-        hdu.writeto(output_filename, overwrite=overwrite)
+            data = np.full(hdul[0].data.shape, np.nan, dtype=np.float32)
+        fits.PrimaryHDU(data, header=header).writeto(output_filename, overwrite=True)
 
 
-def write_chunked_images(data_array, template_files, chunk_idx, total_chunks, chunk_slices, overwrite):
-    """
-    Writes out a sequence of 2D FITS images in chunks, handling overlaps correctly.
-
-    - If `chunk_idx == 0`, creates new output files.
-    - Otherwise, updates existing files only for the processed region.
-    """
-
-    ra_slice, dec_slice = chunk_slices  # Extract slice indices
-
+def write_chunked_images(data_array, template_files, chunk_slices, outdir):
+    """Writes one spatial chunk of the processed cube into the existing output images."""
+    y_slice, x_slice = chunk_slices
     for i, filename in enumerate(template_files):
-        output_filename = filename.replace(".fits", ".contsub.fits")
-
-        with fits.open(filename) as hdul:
-            header = hdul[0].header
-
-        # Load or create output file
-        if chunk_idx == 0 or not os.path.exists(output_filename):
-            output_data = np.zeros_like(data_array[i])  # Create new empty output file
-        else:
-            with fits.open(output_filename, mode='update') as hdul_out:
-                output_data = hdul_out[0].data  # Load existing output data
-
-        # Update only the corresponding region
-        output_data[ra_slice, dec_slice] = data_array[i, :, :]
-
-        # Write back to file
-        hdu = fits.PrimaryHDU(output_data, header=header)
-        hdu.writeto(output_filename, overwrite=overwrite)
+        with fits.open(output_name(filename, outdir), mode='update', memmap=True) as hdul:
+            image = np.squeeze(hdul[0].data) # view onto the file data
+            image[y_slice, x_slice] = data_array[i, :, :]
+            hdul.flush()
 
 
 def fit_baseline(x, y, poly_order=2, sigma_clip_threshold=3):
@@ -226,9 +194,13 @@ def apply_savgol_filter(y, sigma_clip_threshold=2.3, median_filter_size=31, savg
     - y_corrected: Spectrum with baseline removed.
     """
 
-    # Ensure window sizes are valid (must be odd and smaller than the spectrum length)
-    savgol_filter_size = savgol_filter_size if savgol_filter_size % 2 else savgol_filter_size + 1  # Ensure odd length
-    median_filter_size = min(median_filter_size, len(y) - (1 - len(y) % 2))
+    # Ensure window sizes are valid (odd, no longer than the spectrum, longer than poly_order)
+    largest_odd = len(y) if len(y) % 2 else len(y) - 1
+    savgol_filter_size = savgol_filter_size if savgol_filter_size % 2 else savgol_filter_size + 1
+    savgol_filter_size = min(savgol_filter_size, largest_odd)
+    if savgol_filter_size <= poly_order:
+        return y - np.median(y)
+    median_filter_size = min(median_filter_size, largest_odd)
 
     # Step 1: Apply sigma clipping to identify spectral features
     y_median = median_filter(y, size=median_filter_size)  # Median filter first
@@ -243,6 +215,8 @@ def apply_savgol_filter(y, sigma_clip_threshold=2.3, median_filter_size=31, savg
     mask = ignore_edges(mask)
 
     # Step 4: Interpolate over masked regions
+    if mask.all():
+        return y - np.median(y)
     x = np.arange(len(y))
     y_masked = np.interp(x, x[~mask], y[~mask])  # Linear interpolation over masked values
 
@@ -253,39 +227,59 @@ def apply_savgol_filter(y, sigma_clip_threshold=2.3, median_filter_size=31, savg
     return y - smoothed_baseline
 
 
-def worker(args, mode, sigma_clip_threshold, median_filter_size, savgol_filter_size, polyorder):
-    """Worker function for parallel spectral processing."""
-    index_pair, spec = args
-    i, j = index_pair
+def process_spectrum(spec, mode, sigma_clip_threshold, median_filter_size, savgol_filter_size, polyorder):
+    """
+    Continuum-subtract one spectrum. NaN channels are interpolated over for the fit
+    and are NaN in the output; spectra with too few finite channels are returned as NaN.
+    """
+    finite = np.isfinite(spec)
+    if finite.sum() < polyorder + 2:
+        return np.full_like(spec, np.nan)
     x = np.arange(len(spec))
+    y = spec if finite.all() else np.interp(x, x[finite], spec[finite])
 
     if mode == "poly":
-        _, S_contsub = fit_baseline(x, spec, poly_order=polyorder, sigma_clip_threshold=sigma_clip_threshold)
+        _, S_contsub = fit_baseline(x, y, poly_order=polyorder, sigma_clip_threshold=sigma_clip_threshold)
     elif mode == "savgol":
-        S_contsub = apply_savgol_filter(spec, sigma_clip_threshold=sigma_clip_threshold, 
-                                        median_filter_size=median_filter_size, 
-                                        savgol_filter_size=savgol_filter_size, 
+        S_contsub = apply_savgol_filter(y, sigma_clip_threshold=sigma_clip_threshold,
+                                        median_filter_size=median_filter_size,
+                                        savgol_filter_size=savgol_filter_size,
                                         poly_order=polyorder)
     else:
         raise ValueError(f"Unknown mode '{mode}', choose 'poly' or 'savgol'.")
 
-    return (i, j, S_contsub)
+    S_contsub[~finite] = np.nan
+    return S_contsub
+
+
+def worker(block, mode, sigma_clip_threshold, median_filter_size, savgol_filter_size, polyorder):
+    """Worker function: continuum-subtract every spectrum in a (chan, rows, x) block."""
+    out = np.empty_like(block)
+    for i in range(block.shape[1]):
+        for j in range(block.shape[2]):
+            out[:, i, j] = process_spectrum(block[:, i, j], mode, sigma_clip_threshold,
+                                            median_filter_size, savgol_filter_size, polyorder)
+    return out
 
 
 def parallel_process_spectra(cube, mode, sigma_clip_threshold, median_filter_size, savgol_filter_size, polyorder, ncores):
-    """Parallel spectral processing for a 3D FITS cube."""
-    nx, ny = cube.shape[1], cube.shape[2]
-    tasks = [((i, j), cube[:, i, j]) for i, j in itertools.product(range(nx), range(ny))]
+    """
+    Parallel spectral processing for a (chan, y, x) cube.
+    The cube is split into blocks of rows, so each task carries many spectra
+    (one task per spectrum made pickling overheads dominate).
+    """
+    ny = cube.shape[1]
+    nblocks = min(ny, max(1, ncores * 4))
+    row_blocks = [r for r in np.array_split(np.arange(ny), nblocks) if len(r) > 0]
+    blocks = [cube[:, r[0]:r[-1] + 1, :] for r in row_blocks]
 
+    worker_with_args = partial(worker, mode=mode, sigma_clip_threshold=sigma_clip_threshold,
+                               median_filter_size=median_filter_size,
+                               savgol_filter_size=savgol_filter_size, polyorder=polyorder)
     with Pool(processes=ncores) as pool:
-        worker_with_args = partial(worker, mode=mode, sigma_clip_threshold=sigma_clip_threshold, 
-                                   savgol_filter_size=savgol_filter_size, polyorder=polyorder)
-        results = pool.map(worker_with_args, tasks)
-    
-    processed_cube = np.zeros_like(cube)
-    for i, j, spectrum in results:
-        processed_cube[:, i, j] = spectrum
-    return processed_cube
+        results = pool.map(worker_with_args, blocks)
+
+    return np.concatenate(results, axis=1)
 
 
 #------------------------------------------------
@@ -301,8 +295,9 @@ def main():
     parser.add_argument("--mode", type=str, choices=['savgol', 'poly'], default="savgol", help="Continuum subtraction mode")
     parser.add_argument("--sigma", type=float, default=2.3, help="Sigma clipping threshold")
     parser.add_argument("--savgol", type=int, default=31, help="Savitzky-Golay filter window size")
+    parser.add_argument("--median", type=int, default=31, help="Median filter window size used to find spectral features (savgol mode)")
     parser.add_argument("--polyorder", type=int, default=1, help="Polynomial order")
-    parser.add_argument("--out", type=str, help="Output filename (for cubes) or image prefix (default: replaces .fits with .contsub.fits)")
+    parser.add_argument("--out", type=str, help="Output filename (for cubes) or output directory (for images); default replaces .fits with .contsub.fits alongside the input")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing output files")
     parser.add_argument("--ncores", type=int, default=16, help="Number of CPU cores for processing")
     parser.add_argument("--chunk", type=int, default=1, help="Number of spatial chunks for images (default: 1, no chunking)")
@@ -312,40 +307,37 @@ def main():
     # **Case 1: Processing a 3D Cube**
     if args.cube:
         logger.info(f'Loading cube: {args.cube}')
-        data_array = load_cube(args.cube)
+        data_array, shape = load_cube(args.cube)
 
         logger.info(f'Processing cube with {args.ncores} cores.')
         t0 = time.time()
-        contsub_array = parallel_process_spectra(data_array, args.mode, args.sigma, args.savgol, args.polyorder, args.ncores)
+        contsub_array = parallel_process_spectra(data_array, args.mode, args.sigma, args.median, args.savgol, args.polyorder, args.ncores)
         elapsed = time.time() - t0
         logger.info(f'Cube processing completed in {round(elapsed / 60, 2)} minutes')
 
         # Determine output filename
         output_fits = args.out or args.cube.replace('.fits', '.contsub.fits')
         logger.info(f'Writing {output_fits}')
-        write_cube(contsub_array, output_fits, args.cube, args.overwrite)
+        write_cube(contsub_array, shape, output_fits, args.cube, args.overwrite)
 
     # **Case 2: Processing a 2D Image Sequence with Chunking**
     elif args.images:
-        image_files = sorted(glob.glob(args.images))
+        image_files = natural_sort(glob.glob(args.images))
         if not image_files:
             logger.error("No input images found matching the pattern.")
             sys.exit(1)
+        if args.out and not os.path.isdir(args.out):
+            os.makedirs(args.out)
 
         logger.info(f'Processing {len(image_files)} images with {args.chunk}x{args.chunk} spatial chunks.')
+        create_output_images(image_files, args.out, args.overwrite)
 
         total_chunks = args.chunk ** 2
         for chunk_idx in range(total_chunks):
             logger.info(f'Processing chunk {chunk_idx + 1}/{total_chunks}')
-            
-            # Load chunk into memory
-            data_array, template_files, chunk_slices = load_image_chunk(image_files, chunk_idx, args.chunk, total_chunks)
-
-            # Process the chunk
-            contsub_array = parallel_process_spectra(data_array, args.mode, args.sigma, args.savgol, args.polyorder, args.ncores)
-
-            # Write chunk back to images
-            write_chunked_images(contsub_array, template_files, chunk_idx, total_chunks, args.overwrite)
+            data_array, chunk_slices = load_image_chunk(image_files, chunk_idx, args.chunk)
+            contsub_array = parallel_process_spectra(data_array, args.mode, args.sigma, args.median, args.savgol, args.polyorder, args.ncores)
+            write_chunked_images(contsub_array, image_files, chunk_slices, args.out)
 
         logger.info("Image processing complete.")
 

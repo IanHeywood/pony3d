@@ -13,8 +13,10 @@ across chunk boundaries. pony3d is then run with several chunk sizes and the scr
   4. every injected source is found at the right position and frequency
   5. single-channel spikes are removed by filtering
   6. a source inside a region-file exclusion zone is not detected
-  7. subcubes have (chan, y, x) layout and WCS headers that point at the source
+  7. subcubes have (chan, y, x) layout and WCS headers that point at the source, with
+     a clean 3-axis header; mask subcubes are 0/1 masks of the target island only
   8. the boxcar averaging path runs
+  9. a missing channel is reported, and catalogue frequencies use the true frequencies
 
 Usage (from anywhere, in an environment with numpy, scipy, astropy and regions):
 
@@ -108,7 +110,7 @@ def make_data(workdir, seed=42):
 def run_pony3d(workdir, opdir, extra):
     cmd = [sys.executable, '-m', 'pony3d.main', '--threshold', '5', '--boxsize', '50',
            '--minchans', '3', '--specdilate', str(SPECDILATE), '--dilate', '2'] + (['--regionmask', 'exclude.reg'] if HAVE_REGIONS else []) + [
-           '--catalogue', '--subcubes', '--padspatial', '5', '--padspectral', '2',
+           '--catalogue', '--subcubes', '--submasks', '--padspatial', '5', '--padspectral', '2',
            '--catname', 'cat.txt', '--opdir', opdir, '-j', '4'] + extra + [PREFIX]
     env = dict(os.environ, PYTHONPATH=REPO + os.pathsep + os.environ.get('PYTHONPATH', ''))
     p = subprocess.run(cmd, cwd=workdir, env=env, capture_output=True, text=True)
@@ -236,12 +238,60 @@ def main():
         c.check(ok, f'{os.path.basename(sc)}: shape {data.shape}, {detail}')
         c.check(all(k in hdr for k in ('BMAJ', 'BMIN', 'BPA', 'BUNIT')), f'{os.path.basename(sc)}: beam and units in header')
 
+        # Header sanity: 3 axes, no Stokes leftovers, spectral axis referenced to the first
+        # channel of the subcube, at an input channel frequency, with the input spacing
+        k0 = (hdr.get('CRVAL3', np.nan) - FREQ0) / DF
+        problems = []
+        if hdr.get('NAXIS') != 3 or hdr.get('WCSAXES', 3) != 3:
+            problems.append(f'NAXIS={hdr.get("NAXIS")} WCSAXES={hdr.get("WCSAXES")}')
+        if any(k in hdr for k in ('NAXIS4', 'CTYPE4', 'CRVAL4', 'CDELT4', 'CRPIX4')):
+            problems.append('Stokes keywords present')
+        if [hdr.get(f'CTYPE{i}') for i in (1, 2, 3)] != ['RA---SIN', 'DEC--SIN', 'FREQ']:
+            problems.append(f'CTYPEs {[hdr.get(f"CTYPE{i}") for i in (1, 2, 3)]}')
+        if hdr.get('CRPIX3') != 1 or abs(k0 - round(k0)) > 1e-6 or not np.isclose(hdr.get('CDELT3', 0), DF):
+            problems.append(f'CRPIX3={hdr.get("CRPIX3")} CRVAL3 at input chan {k0:.3f} CDELT3={hdr.get("CDELT3")}')
+        for key in ('RADESYS', 'SPECSYS'):
+            if key not in hdr:
+                problems.append(f'{key} missing')
+        c.check(not problems, f'{os.path.basename(sc)}: header sane' + (f' ({"; ".join(problems)})' if problems else ''))
+
+        # Mask subcube: same shape, 0/1, covers the peak, and holds only this island
+        mf = sc.replace('_subcube.fits', '_subcube_mask.fits')
+        if c.check(os.path.isfile(mf), f'{os.path.basename(mf)} written'):
+            mdata = fits.getdata(mf)
+            from scipy.ndimage import label as nd_label
+            ok = (mdata.shape == data.shape and set(np.unique(mdata)) <= {0, 1}
+                  and mdata[kc, ky, kx] == 1 and nd_label(mdata)[1] == 1)
+            c.check(ok, f'{os.path.basename(mf)}: 0/1 mask of a single island covering the peak')
+
     print('Running pony3d with boxcar averaging')
     rc, log = run_pony3d(workdir, 'out_boxcar', ['--boxcar', '3', '--chanchunk', '1000'])
     if not c.check(rc == 0 and 'Traceback' not in log, 'boxcar run exited cleanly'):
         print('\n'.join('      ' + l for l in log.splitlines()[-30:]))
     nmask = len(glob.glob(os.path.join(workdir, 'out_boxcar', 'mask', '*.fits')))
     c.check(nmask == NCHAN - 2, f'boxcar run wrote {nmask} masks (expected {NCHAN - 2})')
+
+    print('Running pony3d with a missing channel')
+    gap_chan = 25
+    gapdir = os.path.join(workdir, 'gap')
+    os.makedirs(gapdir, exist_ok=True)
+    for f in glob.glob(os.path.join(workdir, f'{PREFIX}*.fits')) + glob.glob(os.path.join(workdir, '*.reg')):
+        if not f.endswith(f'{PREFIX}{gap_chan:04d}-image.fits'):
+            shutil.copy(f, gapdir)
+    rc, log = run_pony3d(gapdir, 'out_gap', ['--chanchunk', '1000'])
+    if not c.check(rc == 0 and 'Traceback' not in log, 'missing-channel run exited cleanly'):
+        print('\n'.join('      ' + l for l in log.splitlines()[-30:]))
+    else:
+        c.check('not evenly spaced' in log, 'missing channel reported in the log')
+        gap_cat = read_catalogue(os.path.join(gapdir, 'out_gap', 'cat.txt'))
+        # Sources whose masks lie entirely after the gap must keep their true frequencies
+        for (x, y, c0, c1, peak) in SOURCES:
+            m0, m1 = max(0, c0 - SPECDILATE), min(NCHAN - 1, c1 + SPECDILATE)
+            if m0 > gap_chan:
+                f_mid = (FREQ0 + 0.5 * (m0 + m1) * DF) / 1e6
+                best = min(gap_cat, key=lambda r: abs(r[3] - f_mid)) if gap_cat else None
+                c.check(best is not None and abs(best[3] - f_mid) < 1.0 * DF / 1e6,
+                        f'after the gap: source chans {c0}-{c1} f_com {best[3] if best else None} MHz (expected {f_mid:.3f})')
 
     print()
     if c.failures:

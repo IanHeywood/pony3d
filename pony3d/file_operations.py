@@ -62,7 +62,38 @@ def get_image(fits_file):
     return image_data, header
 
 
-def flush_image(image_data, header, fits_file):
+def get_header(fits_file):
+    """Read only the primary header of a FITS file."""
+    return fits.getheader(fits_file)
+
+
+def channel_frequency(header):
+    """
+    Frequency (Hz) of the single channel in a per-channel image header, allowing for CRPIX3 != 1.
+    Returns None if the header has no third axis.
+    """
+    if 'CRVAL3' not in header:
+        return None
+    return header['CRVAL3'] + (1 - header.get('CRPIX3', 1)) * header.get('CDELT3', 0.0)
+
+
+def check_channel_spacing(freqs, rtol=1e-3):
+    """
+    Check that a sequence of channel frequencies is evenly spaced.
+
+    Returns (ok, spacing, gaps) where spacing is the median channel separation and gaps
+    lists the indices i where freqs[i+1] - freqs[i] differs from it by more than rtol.
+    """
+    freqs = np.asarray(freqs, dtype=float)
+    if len(freqs) < 2:
+        return True, None, []
+    diffs = np.diff(freqs)
+    spacing = np.median(diffs)
+    gaps = list(np.where(np.abs(diffs - spacing) > rtol * abs(spacing))[0])
+    return len(gaps) == 0, spacing, gaps
+
+
+def flush_image(image_data, header, fits_file, dtype='float32'):
     """
     Write the 2D image data array to a FITS file.
 
@@ -73,7 +104,7 @@ def flush_image(image_data, header, fits_file):
     """
     logging.info(f'Writing {fits_file} with data length {len(image_data)}; duplicate file? {os.path.exists(fits_file)}')
     try:
-        hdu = fits.PrimaryHDU(image_data.astype('float32'), header)
+        hdu = fits.PrimaryHDU(image_data.astype(dtype), header)
         hdu.verify('silentfix')
         hdu.writeto(fits_file, overwrite=True)
     except Exception:

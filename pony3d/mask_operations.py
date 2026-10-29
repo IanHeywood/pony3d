@@ -14,7 +14,8 @@ from astropy import units as u
 from astropy.wcs import WCS
 from scipy.ndimage import binary_dilation, binary_erosion, convolve, minimum_filter
 from scipy.ndimage import find_objects, center_of_mass, label, binary_fill_holes
-from pony3d.file_operations import get_image, flush_image, load_cube
+from pony3d.file_operations import get_image, get_header, flush_image, load_cube
+from pony3d.file_operations import channel_frequency, check_channel_spacing
 from pony3d import __version__
 
 
@@ -413,17 +414,18 @@ def extract_islands(image_subset, mask_subset, core_lo, core_hi, truncated_lo, t
     logging.info(f'[{log_prefix}_{idx}] Reading filtered mask subset')
     cube = load_cube(mask_subset, dtype=bool)
 
-    dummy_img, header = get_image(image_subset[0])
+    header = get_header(image_subset[0])
     wcs = WCS(header)
     celestial_wcs = wcs.celestial # RA/Dec only, works for 2, 3 or 4 axis headers
-    # Frequency of channel 0 of the subset (allowing for CRPIX3 != 1)
-    df = header.get('CDELT3')
-    freq0 = header.get('CRVAL3') + (1 - header.get('CRPIX3', 1)) * df
+    # Actual frequency of every channel in the subset, read from each image, so that
+    # catalogue frequencies stay correct if the channels are not evenly spaced
+    freqs = [channel_frequency(get_header(f)) for f in image_subset]
+    freqs = np.array([np.nan if f is None else f for f in freqs], dtype=float)
+    chan_index = np.arange(len(freqs))
 
-    # Label the cube and free up the RAM used by the boolean array and the template FITS image
+    # Label the cube and free up the RAM used by the boolean array
     labeled_cube, n_islands = label(cube)
-    del cube 
-    del dummy_img
+    del cube
     gc.collect()
     
     logging.info(f'[{log_prefix}_{idx}] Image subset contains {n_islands} islands')
@@ -432,6 +434,8 @@ def extract_islands(image_subset, mask_subset, core_lo, core_hi, truncated_lo, t
     nchan_subset = labeled_cube.shape[2]
     src_ids = []
     src_bboxes = []
+    src_labels = []
+    src_fcom = []
     n_truncated = 0
 
     for region_idx, bbox in enumerate(bounding_boxes, start = 1):
@@ -451,13 +455,15 @@ def extract_islands(image_subset, mask_subset, core_lo, core_hi, truncated_lo, t
             ra_hms, dec_dms, src_id = format_ra_dec(ra,dec)
             src_ids.append(src_id)
             src_bboxes.append(bbox)
+            src_labels.append(region_idx)
             ch_com = com[2]
-            f_com = round(((freq0+(ch_com*df))/1e6),3)
+            f_com = round(float(np.interp(ch_com, chan_index, freqs)) / 1e6, 3)
+            src_fcom.append(f_com)
             z_com = round(((f_hi/f_com) - 1.0),4)
-            ch0 = bbox[2].start 
+            ch0 = bbox[2].start
             ch1 = bbox[2].stop - 1 # last channel of the island (stop is exclusive)
-            f0 = (freq0+(ch0*df))/1e6
-            f1 = (freq0+(ch1*df))/1e6
+            f0 = freqs[ch0] / 1e6
+            f1 = freqs[ch1] / 1e6
             com_fits = image_subset[round(ch_com)].split('/')[-1]
             if catalogue:
                 fname = f'{opdir}/cat_temp/{src_id}{tdl}{ra}{tdl}{dec}{tdl}{f0}{tdl}{f1}{tdl}{f_com}{tdl}{z_com}{tdl}{com_fits}'
@@ -477,15 +483,22 @@ def extract_islands(image_subset, mask_subset, core_lo, core_hi, truncated_lo, t
         data_cube = load_cube(image_subset)
 
         # 3D WCS (RA, Dec, Freq) for the subset, dropping any Stokes axis.
-        # Channel 0 of the subset is the reference channel of the first image.
+        # The spectral axis is reset for each subcube from the frequencies of its own channels.
         cube_wcs = wcs.sub(['celestial', 'spectral'])
         if cube_wcs.naxis != 3:
             cube_wcs = None # no spectral axis in the header, write a 2D WCS
 
         for src in range(0,len(src_ids)):
             src_id = src_ids[src]
-            logging.info(f'[{log_prefix}_{idx}] Writing subcube for {src_id}')
             bbox = src_bboxes[src]
+            # Centroid frequency in the name keeps islands at the same position apart
+            stem = f'pony3d_{src_id}_{src_fcom[src]:.3f}MHz'
+            subcube_fits_file = os.path.join(opdir, cubetag, f'{stem}_subcube.fits')
+            submask_fits_file = os.path.join(opdir, cubetag, f'{stem}_subcube_mask.fits')
+            if os.path.isfile(subcube_fits_file) and (not submasks or os.path.isfile(submask_fits_file)) and not overwrite:
+                logging.info(f'[{log_prefix}_{idx}] Skipping {subcube_fits_file} (overwrite disabled)')
+                continue
+            logging.info(f'[{log_prefix}_{idx}] Writing subcube for {src_id}')
 
             # Apply padding to the bounding box, clipped to the data
             pads = (padspatial, padspatial, padspectral)
@@ -499,18 +512,30 @@ def extract_islands(image_subset, mask_subset, core_lo, core_hi, truncated_lo, t
             sub_cube_data = np.transpose(data_cube[expanded_bbox], (2, 0, 1))
 
             if submasks:
-                labeled_sub_cube_data = np.transpose(labeled_cube[expanded_bbox], (2, 0, 1))
+                # 0/1 mask of this island only (other islands in the box are excluded)
+                island_mask = labeled_cube[expanded_bbox] == src_labels[src]
+                sub_mask_data = np.transpose(island_mask, (2, 0, 1)).astype(np.uint8)
 
             # Header: WCS with CRPIX following the cut-out
             ch_mid = (cs.start + cs.stop - 1) // 2
-            dummy_img, mid_header = get_image(image_subset[ch_mid])
-            # Shift the reference pixel by the cut-out offsets explicitly. (WCS.slice clips
-            # offsets to the pixel shape of the header, which is 1 along the spectral axis
-            # of a single-channel image, so the frequency axis was not shifted.)
+            mid_header = get_header(image_subset[ch_mid])
+            # Shift the spatial reference pixel by the cut-out offsets explicitly. (WCS.slice
+            # clips offsets to the pixel shape of the header, which is 1 along the spectral
+            # axis of a single-channel image.)
             sub_wcs = (cube_wcs if cube_wcs is not None else celestial_wcs).deepcopy()
-            offsets = (xs.start, ys.start, cs.start)[:sub_wcs.naxis]
-            for axis, offset in enumerate(offsets):
-                sub_wcs.wcs.crpix[axis] -= offset
+            sub_wcs.wcs.crpix[0] -= xs.start
+            sub_wcs.wcs.crpix[1] -= ys.start
+            if cube_wcs is not None:
+                # Spectral axis from the subcube's own channels: first channel is the reference
+                sub_freqs = freqs[cs]
+                even, spacing, gaps = check_channel_spacing(sub_freqs)
+                sub_wcs.wcs.crpix[2] = 1.0
+                sub_wcs.wcs.crval[2] = sub_freqs[0]
+                if spacing is not None:
+                    sub_wcs.wcs.cdelt[2] = spacing
+                if not even:
+                    logging.warning(f'[{log_prefix}_{idx}] {subcube_fits_file}: channels are not evenly spaced '
+                                    f'(gap after subcube channel(s) {[int(g) for g in gaps]}); the linear frequency axis in the header is approximate')
             header = sub_wcs.to_header()
             # Carry across beam, units and other useful keywords from the central channel
             for key in ('BUNIT', 'BMAJ', 'BMIN', 'BPA', 'BTYPE', 'OBJECT', 'TELESCOP', 'OBSERVER', 'DATE-OBS', 'RESTFRQ', 'SPECSYS'):
@@ -519,13 +544,14 @@ def extract_islands(image_subset, mask_subset, core_lo, core_hi, truncated_lo, t
             header['COMMENT'] = f'{src_id}'
             header['COMMENT'] = f'pony3d-{__version__}'
 
-            subcube_fits_file = os.path.join(opdir, cubetag, f'pony3d_{src_id}_subcube.fits')
             f_written = flush_image(sub_cube_data, header, subcube_fits_file)
             if not f_written:
                 logging.error(f'Failed to write FITS file: sub_cube_data file {subcube_fits_file}')
 
             if submasks:
-                labeled_subcube_fits_file = os.path.join(opdir, cubetag, f'pony3d_{src_id}_subcube_label.fits')
-                f_written = flush_image(labeled_sub_cube_data, header, labeled_subcube_fits_file)
+                mask_header = header.copy()
+                for key in ('BUNIT', 'BTYPE'):
+                    mask_header.remove(key, ignore_missing=True)
+                f_written = flush_image(sub_mask_data, mask_header, submask_fits_file, dtype='uint8')
                 if not f_written:
-                    logging.error(f'Failed to write FITS file: labeled_sub_cube_data file {labeled_subcube_fits_file}')
+                    logging.error(f'Failed to write FITS file: sub_mask_data file {submask_fits_file}')

@@ -12,7 +12,8 @@ import numpy as np
 from multiprocessing import Pool
 
 from pony3d.terminal_operations import initialize_logging, hello, spacer
-from pony3d.file_operations import create_directories, natural_sort, get_image
+from pony3d.file_operations import create_directories, natural_sort, get_image, get_header
+from pony3d.file_operations import channel_frequency, check_channel_spacing
 from pony3d.mask_operations import get_tdl, make_mask, make_averaged_mask
 from pony3d.mask_operations import filter_mask, count_islands, extract_islands
 
@@ -245,6 +246,21 @@ def main():
     logger.info(f'Channels per processing worker ....... : {chanchunk}')
     logger.info(f'Halo channels either side of chunks .. : {overlap}')
     spacer()
+
+    # Check the input channels are in frequency order and evenly spaced
+    freqs = [channel_frequency(get_header(f)) for f in fits_list]
+    if None in freqs:
+        logger.warning('Some input images have no frequency axis; catalogue frequencies will be NaN')
+    else:
+        even, spacing, gaps = check_channel_spacing(freqs)
+        steps = np.diff(freqs)
+        if (steps > 0).any() and (steps < 0).any():
+            logger.warning('Input images are not in frequency order; check the filename ordering')
+        if not even:
+            shown = ', '.join(f'{fits_list[g]} -> {fits_list[g+1]}' for g in gaps[:5])
+            logger.warning(f'Input channels are not evenly spaced ({len(gaps)} irregular step(s), e.g. {shown}). '
+                           f'Catalogue frequencies use each image\'s own frequency, but islands spanning a gap '
+                           f'are treated as contiguous')
 
     # Memory estimate for the cube stages, from the image size and chunk window
     ny, nx = get_image(fits_list[0])[0].shape

@@ -3,6 +3,7 @@
 
 
 import argparse
+import os
 import sys
 import glob
 import time
@@ -10,7 +11,7 @@ import numpy as np
 from multiprocessing import Pool
 
 from pony3d.terminal_operations import initialize_logging, hello, spacer
-from pony3d.file_operations import create_directories, natural_sort
+from pony3d.file_operations import create_directories, natural_sort, get_image
 from pony3d.mask_operations import get_tdl, make_mask, make_averaged_mask
 from pony3d.mask_operations import filter_mask, count_islands, extract_islands
 
@@ -44,6 +45,54 @@ def channel_chunks(nchan, chanchunk, halo):
         hi = min(nchan, c1 + halo)
         chunks.append((lo, hi, c0 - lo, c1 - lo))
     return chunks
+
+
+def available_memory_bytes(memlimit_gb, logger):
+    """
+    Memory available for cube workers, in bytes.
+    Uses --memlimit if given, else MemAvailable from /proc/meminfo (Linux), capped by a
+    SLURM allocation if one is set. Falls back to half of physical memory elsewhere.
+    """
+    if memlimit_gb > 0:
+        return memlimit_gb * 1e9, f'--memlimit {memlimit_gb} GB'
+    mem, source = None, ''
+    try:
+        with open('/proc/meminfo') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    mem, source = int(line.split()[1]) * 1024, 'MemAvailable'
+                    break
+    except OSError:
+        pass
+    if mem is None:
+        try:
+            mem = 0.5 * os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES')
+            source = 'half of physical memory'
+        except (ValueError, OSError, AttributeError):
+            return None, 'unknown'
+    slurm_mb = os.environ.get('SLURM_MEM_PER_NODE')
+    if slurm_mb and slurm_mb.isdigit() and int(slurm_mb) * 1e6 < mem:
+        mem, source = int(slurm_mb) * 1e6, 'SLURM_MEM_PER_NODE'
+    return mem, source
+
+
+def choose_jcube(requested, nchunks, j, bytes_per_worker, mem_bytes, stage, logger):
+    """
+    Number of workers for a cube stage: the requested value if given, otherwise the smallest of
+    the number of chunks, -j, and the number of workers whose estimated footprint fits in memory.
+    """
+    logger.info(f'{stage}: estimated memory per worker {bytes_per_worker/1e9:.1f} GB, {nchunks} chunk(s)')
+    if requested > 0:
+        jcube = min(requested, nchunks)
+        if mem_bytes is not None and jcube * bytes_per_worker > mem_bytes:
+            logger.warning(f'{stage}: --jcube {requested} may need ~{jcube*bytes_per_worker/1e9:.1f} GB, more than the {mem_bytes/1e9:.1f} GB available')
+    else:
+        fit = int(mem_bytes // bytes_per_worker) if mem_bytes is not None else j
+        if fit < 1:
+            logger.warning(f'{stage}: one worker may need ~{bytes_per_worker/1e9:.1f} GB, more than the {mem_bytes/1e9:.1f} GB available; reduce --chanchunk')
+        jcube = max(1, min(nchunks, j, fit))
+    logger.info(f'{stage}: using {jcube} worker process(es)')
+    return jcube
 
 
 def main():
@@ -93,7 +142,9 @@ def main():
     output_group.add_argument('--force', dest='overwrite', action='store_true', help='Overwrite existing FITS outputs (default = do not overwrite)')
 
     parallel_group = parser.add_argument_group('parallelism arguments')
-    parallel_group.add_argument('--j', '-j', type=int, default=24, metavar='', help='Number of worker processes (default = 24)')
+    parallel_group.add_argument('--j', '-j', type=int, default=24, metavar='', help='Number of worker processes for the per-channel stages: mask making and island counting (default = 24)')
+    parallel_group.add_argument('--jcube', type=int, default=0, metavar='', help='Number of worker processes for the cube stages: filtering and extraction (default = smallest of number of chunks, -j, and the number of workers that fit in memory)')
+    parallel_group.add_argument('--memlimit', type=float, default=0, metavar='', help='Memory (GB) available to cube workers, used to choose --jcube (default = detect)')
     parallel_group.add_argument('--chanchunk', type=int, default=128, metavar='', help='Number of channels to load per worker when processing islands (default = 128)')
     parallel_group.add_argument('--overlap', type=int, default=-1, metavar = '', help='Halo of extra channels read either side of each chunk; islands are only cut at chunk edges if they extend beyond the halo (default = max(minchans + specdilate, 16))')
 
@@ -134,6 +185,8 @@ def main():
         catname = f'pony3.sources.{timestamp}.txt'
 
     j = args.j
+    jcube = args.jcube
+    memlimit = args.memlimit
     chanchunk = args.chanchunk
     overlap = args.overlap
 
@@ -183,9 +236,24 @@ def main():
     logger.info(f'Save noise images .................... : {"Yes" if savenoise else "No"}')
     logger.info(f'Output folder ........................ : {opdir}')
     logger.info(f'Overwrite existing files ............. : {"Yes" if overwrite else "No"}')
-    logger.info(f'Number of worker processes ........... : {j}')
+    logger.info(f'Per-channel worker processes ......... : {j}')
+    logger.info(f'Cube worker processes ................ : {"auto" if jcube <= 0 else jcube}')
     logger.info(f'Channels per processing worker ....... : {chanchunk}')
     logger.info(f'Halo channels either side of chunks .. : {overlap}')
+    spacer()
+
+    # Memory estimate for the cube stages, from the image size and chunk window
+    ny, nx = get_image(fits_list[0])[0].shape
+    window = min(chanchunk + 2 * overlap, nfits)
+    voxels_per_worker = ny * nx * window
+    mem_bytes, mem_source = available_memory_bytes(memlimit, logger)
+    if mem_bytes is not None:
+        logger.info(f'Memory available for cube workers .... : {mem_bytes/1e9:.1f} GB ({mem_source})')
+    # Bytes per voxel: filtering = bool cube + int32 labels + filtered bool + dilated bool
+    #                  extraction = bool cube + int32 labels (+ float32 data cube for subcubes)
+    # plus 20% headroom
+    filter_bytes = 1.2 * 7 * voxels_per_worker
+    extract_bytes = 1.2 * (5 + (4 if subcubes else 0)) * voxels_per_worker
     spacer()
 
     t0 = time.time()
@@ -231,7 +299,8 @@ def main():
             [minchans]*ns, [specdilate]*ns, [masktag]*ns, 
             [filtertag]*ns, [overwrite]*ns, np.arange(ns)
         )
-        run_pool(filter_mask, iterable_params, j, 'Mask filtering', logger)
+        jf = choose_jcube(jcube, ns, j, filter_bytes, mem_bytes, 'Mask filtering', logger)
+        run_pool(filter_mask, iterable_params, jf, 'Mask filtering', logger, maxtasksperchild=1)
 
     t_filter = time.time()
     # Count islands
@@ -271,7 +340,8 @@ def main():
             [submasks]*ns, [padspatial]*ns, [padspectral]*ns, [catname]*ns, [cubetag]*ns,
             [overwrite]*ns, np.arange(ns)
         )
-        run_pool(extract_islands, iterable_params, j, 'Source extraction', logger)
+        je = choose_jcube(jcube, ns, j, extract_bytes, mem_bytes, 'Source extraction', logger)
+        run_pool(extract_islands, iterable_params, je, 'Source extraction', logger, maxtasksperchild=1)
 
         if catalogue:
             tdl = get_tdl()

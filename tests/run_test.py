@@ -35,6 +35,12 @@ from astropy.io import fits
 from astropy.wcs import WCS
 import astropy.units as u
 
+try:
+    import regions  # noqa: F401
+    HAVE_REGIONS = True
+except ImportError:
+    HAVE_REGIONS = False
+
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -80,7 +86,7 @@ def make_data(workdir, seed=42):
     yy, xx = np.mgrid[0:NY, 0:NX]
     for i in range(NCHAN):
         img = rng.normal(0.0, SIGMA, (NY, NX))
-        for (x, y, c0, c1, peak) in SOURCES + [EXCLUDED]:
+        for (x, y, c0, c1, peak) in SOURCES + ([EXCLUDED] if HAVE_REGIONS else []):
             if c0 <= i <= c1:
                 img += peak * SIGMA * np.exp(-((xx - x) ** 2 + (yy - y) ** 2) / (2 * 2.0 ** 2))
         for (x, y, c) in SPIKES:
@@ -101,7 +107,7 @@ def make_data(workdir, seed=42):
 
 def run_pony3d(workdir, opdir, extra):
     cmd = [sys.executable, '-m', 'pony3d.main', '--threshold', '5', '--boxsize', '50',
-           '--minchans', '3', '--specdilate', str(SPECDILATE), '--dilate', '2', '--regionmask', 'exclude.reg',
+           '--minchans', '3', '--specdilate', str(SPECDILATE), '--dilate', '2'] + (['--regionmask', 'exclude.reg'] if HAVE_REGIONS else []) + [
            '--catalogue', '--subcubes', '--padspatial', '5', '--padspectral', '2',
            '--catname', 'cat.txt', '--opdir', opdir, '-j', '4'] + extra + [PREFIX]
     env = dict(os.environ, PYTHONPATH=REPO + os.pathsep + os.environ.get('PYTHONPATH', ''))
@@ -203,7 +209,10 @@ def main():
     for (x, y, ch) in SPIKES:
         c.check(not ref_masks[ch, y, x], f'single-channel spike at ({x},{y}) chan {ch} filtered out')
     x, y, c0, c1, _ = EXCLUDED
-    c.check(not ref_masks[c0:c1 + 1, y, x].any(), f'source in region-file exclusion zone at ({x},{y}) not masked')
+    if HAVE_REGIONS:
+        c.check(not ref_masks[c0:c1 + 1, y, x].any(), f'source in region-file exclusion zone at ({x},{y}) not masked')
+    else:
+        print('  [SKIP] region-file exclusion (regions package not installed)')
 
     print('Checking subcubes')
     subcubes = sorted(glob.glob(os.path.join(workdir, 'out_single', 'subcubes', '*_subcube.fits')))

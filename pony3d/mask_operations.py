@@ -12,7 +12,6 @@ import time
 from astropy.coordinates import SkyCoord
 from astropy import units as u
 from astropy.wcs import WCS
-from regions import Regions
 from scipy.ndimage import binary_dilation, binary_erosion, convolve, minimum_filter
 from scipy.ndimage import find_objects, center_of_mass, label, binary_fill_holes
 from pony3d.file_operations import get_image, flush_image, load_cube
@@ -69,6 +68,7 @@ def apply_region_mask(image_data, wcs, region_file):
     image_data (ndarray): Image data with the region applied as a mask (masked areas are set to np.nan).
     """
 
+    from regions import Regions # only needed when --regionmask is used
     regs = Regions.read(region_file) #, format='ds9')
     mask = np.zeros_like(image_data) #, dtype='int')
 

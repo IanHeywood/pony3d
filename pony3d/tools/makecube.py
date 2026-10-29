@@ -216,16 +216,16 @@ def main():
 
     parser = argparse.ArgumentParser(description='Turn a sequence of 2D FITS images into a 3D spectral FITS cube')
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument('--pattern', type=str, default='', metavar='', help='Pattern to glob for to obtain image sequence')
-    group.add_argument('--textfile', type=str, default='', metavar='', help='Open a text file containing the input filenames')
-    parser.add_argument('--outfile', type=str, default='', metavar='', help='Name of output FITS cube', required=True)
+    group.add_argument('--pattern', type=str, default='', help='Pattern to glob for to obtain image sequence')
+    group.add_argument('--textfile', type=str, default='', help='Open a text file containing the input filenames')
+    parser.add_argument('--outfile', type=str, default='', help='Name of output FITS cube', required=True)
     parser.add_argument('--compress', type=str, default='none', choices=['none', 'gzip', 'rice'],
                         help='Tile compression, needs fitsio: gzip = GZIP_2, lossless; rice = RICE_1, quantised (lossy) '
                              'at --qlevel. Needs temporary disk space equal to the uncompressed cube (default = none)')
-    parser.add_argument('--qlevel', type=float, default=16.0, metavar='',
+    parser.add_argument('--qlevel', type=float, default=16.0,
                         help='Quantisation level for rice compression: values are quantised to the tile noise / qlevel, '
                              'so higher keeps more precision (default = 16; fpack uses 4)')
-    parser.add_argument('--tilesize', type=str, default='256,256', metavar='',
+    parser.add_argument('--tilesize', type=str, default='256,256',
                         help='Compression tile size in spatial pixels, x,y (default = 256,256)')
     parser.add_argument('--overwrite', action='store_true', help='Overwrite an existing output cube')
     args = parser.parse_args()

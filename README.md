@@ -23,75 +23,89 @@ pip install pony3d
 Note that `input_pattern` is a pattern. Specifying `my_images` will return a naturally-sorted list of all files in the current directory that match `*my_images*`.
 
 ```
-usage: pony3d [-h] [--threshold ] [--boxsize ] [--trim ] [--regionmask ] [--invert] [--minchans ]
-              [--dilate ] [--specdilate ] [--boxcar ] [--catalogue] [--subcubes] [--submasks]
-              [--padspatial ] [--padspectral ] [--saveaverage] [--savenoise] [--opdir ]
-              [--masktag ] [--noisetag ] [--averagetag ] [--filtertag ] [--cubetag ] [--catname ]
-              [--force] [--j ] [--jcube ] [--memlimit ] [--chanchunk ] [--overlap ]
+usage: pony3d [-h] [--threshold THRESHOLD] [--boxsize BOXSIZE] [--trim TRIM]
+              [--regionmask REGIONMASK] [--invert] [--minchans MINCHANS] [--dilate DILATE]
+              [--specdilate SPECDILATE] [--boxcar BOXCAR] [--catalogue] [--subcubes] [--submasks]
+              [--padspatial PADSPATIAL] [--padspectral PADSPECTRAL] [--saveaverage] [--savenoise]
+              [--opdir OPDIR] [--masktag MASKTAG] [--noisetag NOISETAG] [--averagetag AVERAGETAG]
+              [--filtertag FILTERTAG] [--cubetag CUBETAG] [--catname CATNAME] [--force] [--j J]
+              [--jcube JCUBE] [--memlimit MEMLIMIT] [--chanchunk CHANCHUNK] [--overlap OVERLAP]
               input_pattern
 
 Parallelised production of deconvolution masks, and 3D source-finding
 
 positional arguments:
-  input_pattern   Pattern for the sequence of FITS files to process
+  input_pattern         Pattern for the sequence of FITS files to process
 
 options:
-  -h, --help      show this help message and exit
+  -h, --help            show this help message and exit
 
 detection arguments:
-  --threshold     Sigma threshold for masking (default = 5.0)
-  --boxsize       Box size for background noise estimation (default = 150)
+  --threshold THRESHOLD
+                        Sigma threshold for masking (default = 5.0)
+  --boxsize BOXSIZE     Box size for background noise estimation (default = 150)
 
 image pre-processing arguments:
-  --trim          Trim this number of pixels from any NaN boundaries to avoid noisy edges (default
-                  = 0)
-  --regionmask    Provide a region file that defines areas to exclude from the subsequent
-                  processing
-  --invert        Multiply images by -1 prior to processing (default = do not invert images)
+  --trim TRIM           Trim this number of pixels from any NaN boundaries to avoid noisy edges
+                        (default = 0)
+  --regionmask REGIONMASK
+                        Provide a region file that defines areas to exclude from the subsequent
+                        processing
+  --invert              Multiply images by -1 prior to processing (default = do not invert images)
 
 processing arguments:
-  --minchans      Minimum number of contiguous channels that an island must have to be retained
-                  (must be less than chanchunk-2; default = 3)
-  --dilate        Iterations of dilation in spatial dimensions (default = 3, set to 0 to disable)
-  --specdilate    Iterations of dilation in the spectral dimension (default = 3, set to 0 to
-                  disable)
-  --boxcar        Width of boxcar window to apply (odd numbers preferred, default = 1, i.e., no
-                  averaging)
+  --minchans MINCHANS   Minimum number of contiguous channels that an island must have to be
+                        retained (must be less than chanchunk-2; default = 3)
+  --dilate DILATE       Iterations of dilation in spatial dimensions (default = 3, set to 0 to
+                        disable)
+  --specdilate SPECDILATE
+                        Iterations of dilation in the spectral dimension (default = 3, set to 0 to
+                        disable)
+  --boxcar BOXCAR       Width of boxcar window to apply (odd numbers preferred, default = 1, i.e.,
+                        no averaging)
 
 island extraction arguments:
-  --catalogue     Write out the 3D locations of each island (default = do not write catalogue)
-  --subcubes      Produce 3D FITS sub-cubes from the data for each island (default = do not
-                  produce)
-  --submasks      Produce 3D FITS sub-cubes of the mask for each island (increases memory
-                  footprint; default = do not produce)
-  --padspatial    Pad the subcube spatial dimensions around each island with this number of pixels
-                  (default = 50)
-  --padspectral   Pad the subcube spectral dimensions around each island with this number of
-                  channels (default = 10)
+  --catalogue           Write out the 3D locations of each island (default = do not write
+                        catalogue)
+  --subcubes            Produce 3D FITS sub-cubes from the data for each island (default = do not
+                        produce)
+  --submasks            Produce 3D FITS sub-cubes of the mask for each island (increases memory
+                        footprint; default = do not produce)
+  --padspatial PADSPATIAL
+                        Pad the subcube spatial dimensions around each island with this number of
+                        pixels (default = 50)
+  --padspectral PADSPECTRAL
+                        Pad the subcube spectral dimensions around each island with this number of
+                        channels (default = 10)
 
 output arguments:
-  --saveaverage   Save the boxcar-averaged images (default = do not save)
-  --savenoise     Enable to export noise images as FITS files (default = do not save)
-  --opdir         Name of folder for output products (default = auto generated)
-  --masktag       Suffix and subfolder name for mask images (default = mask)
-  --noisetag      Suffix and subfolder name for noise images (default = noise)
-  --averagetag    Suffix and subfolder name for boxcar averaged images (default = boxavg)
-  --filtertag     Suffix and subfolder name for filtered images (default = filtered)
-  --cubetag       Suffix and folder name for subcubes (default = subcubes)
-  --catname       Filename for output catalogue (default = auto generated)
-  --force         Overwrite existing FITS outputs (default = do not overwrite)
+  --saveaverage         Save the boxcar-averaged images (default = do not save)
+  --savenoise           Enable to export noise images as FITS files (default = do not save)
+  --opdir OPDIR         Name of folder for output products (default = auto generated)
+  --masktag MASKTAG     Suffix and subfolder name for mask images (default = mask)
+  --noisetag NOISETAG   Suffix and subfolder name for noise images (default = noise)
+  --averagetag AVERAGETAG
+                        Suffix and subfolder name for boxcar averaged images (default = boxavg)
+  --filtertag FILTERTAG
+                        Suffix and subfolder name for filtered images (default = filtered)
+  --cubetag CUBETAG     Suffix and folder name for subcubes (default = subcubes)
+  --catname CATNAME     Filename for output catalogue (default = auto generated)
+  --force               Overwrite existing FITS outputs (default = do not overwrite)
 
 parallelism arguments:
-  --j, -j         Number of worker processes for the per-channel stages: mask making and island
-                  counting (default = 24)
-  --jcube         Number of worker processes for the cube stages: filtering and extraction
-                  (default = smallest of number of chunks, -j, and the number of workers that fit
-                  in memory)
-  --memlimit      Memory (GB) available to cube workers, used to choose --jcube (default = detect)
-  --chanchunk     Number of channels to load per worker when processing islands (default = 128)
-  --overlap       Halo of extra channels read either side of each chunk; islands are only cut at
-                  chunk edges if they extend beyond the halo (default = max(minchans + specdilate,
-                  16))
+  --j, -j J             Number of worker processes for the per-channel stages: mask making and
+                        island counting (default = 24)
+  --jcube JCUBE         Number of worker processes for the cube stages: filtering and extraction
+                        (default = smallest of number of chunks, -j, and the number of workers
+                        that fit in memory)
+  --memlimit MEMLIMIT   Memory (GB) available to cube workers, used to choose --jcube (default =
+                        detect)
+  --chanchunk CHANCHUNK
+                        Number of channels to load per worker when processing islands (default =
+                        128)
+  --overlap OVERLAP     Halo of extra channels read either side of each chunk; islands are only
+                        cut at chunk edges if they extend beyond the halo (default = max(minchans
+                        + specdilate, 16))
 ```
 
 ## Parallelism and memory

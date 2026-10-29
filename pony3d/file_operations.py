@@ -7,7 +7,6 @@ import re
 import glob
 import numpy as np
 import logging
-import traceback
 from astropy.io import fits
 
 
@@ -77,15 +76,14 @@ def flush_image(image_data, header, fits_file):
         hdu = fits.PrimaryHDU(image_data.astype('float32'), header)
         hdu.verify('silentfix')
         hdu.writeto(fits_file, overwrite=True)
-    except Exception as e:
-        logging.error(traceback.print_exception(e))
-    finally:
-        if os.path.exists(fits_file):
-            logging.info(f'Written {fits_file}')
-            return True
-        else:
-            logging.error(f'Error: FITS file NOT written {fits_file}')
-            return False
+    except Exception:
+        logging.exception(f'Error: FITS file NOT written {fits_file}')
+        return False
+    if os.path.exists(fits_file):
+        logging.info(f'Written {fits_file}')
+        return True
+    logging.error(f'Error: FITS file NOT written {fits_file}')
+    return False
 
 
 def load_cube(fits_list):

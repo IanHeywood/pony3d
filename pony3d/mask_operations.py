@@ -9,7 +9,6 @@ import numpy as np
 import os
 import scipy.special
 import time
-import traceback
 from astropy.coordinates import SkyCoord
 from astropy import units as u
 from astropy.wcs import WCS
@@ -23,6 +22,17 @@ from pony3d import __version__
 def get_tdl():
     tdl = '_-pony-_' # weird delimiter string to avoid split errors from the catalogue temp files
     return tdl
+
+
+def tagged_name(fits_file, tag):
+    """
+    Output filename for fits_file with .tag inserted before the .fits suffix.
+    Only the basename is used, so directory names never get altered.
+    """
+    base = os.path.basename(fits_file)
+    if base.endswith('.fits'):
+        return f'{base[:-5]}.{tag}.fits'
+    return f'{base}.{tag}.fits'
 
 
 def format_ra_dec(ra,dec,sep=':'):
@@ -68,7 +78,9 @@ def apply_region_mask(image_data, wcs, region_file):
     for reg in regs:
         if hasattr(reg, 'to_pixel'):
             reg = reg.to_pixel(wcs)
-            mask += reg.to_mask().to_image(mask.shape)
+            reg_image = reg.to_mask().to_image(mask.shape)
+            if reg_image is not None: # None if the region lies entirely off the image
+                mask += reg_image
 
     mask = np.array(mask,dtype='bool')
     image_data[mask] = np.nan
@@ -95,11 +107,18 @@ def get_mask_and_noise(input_image, threshold, boxsize, trim):
     f = 0.5 * (1.0 + scipy.special.erf(x / np.sqrt(2.0)))
     F = 1.0 - (1.0 - f) ** n
     ratio = np.abs(np.interp(0.5, F, x))
-    noise_image = -minimum_filter(input_image, box) / ratio
+    # NaNs (blanked edges, region masks) are replaced with +inf so they never
+    # become the box minimum, and are restored afterwards
+    nan_mask = np.isnan(input_image)
+    filled_image = np.where(nan_mask, np.inf, input_image)
+    noise_image = -minimum_filter(filled_image, box) / ratio
+    noise_image[~np.isfinite(noise_image)] = 1.0e-10 # boxes that are entirely NaN
     noise_image[noise_image < 0.0] = 1.0e-10
-    median_noise = np.median(noise_image)
+    noise_image[nan_mask] = np.nan
+    median_noise = np.nanmedian(noise_image)
     noise_image[noise_image < median_noise] = median_noise
-    mask_image = input_image > threshold * noise_image
+    mask_image = np.zeros(input_image.shape, dtype=bool)
+    mask_image[~nan_mask] = input_image[~nan_mask] > threshold * noise_image[~nan_mask]
 
     # Erosion iterations trim method 
     if trim > 0:
@@ -157,7 +176,7 @@ def make_mask(input_fits, threshold, boxsize, dilate, trim, regionmask, invert, 
     log_prefix = 'Mask'
     idx = str(idx).zfill(5)
     logging.info(f'[{log_prefix}_{idx}] Worker process {idx} operating on image {input_fits}')
-    mask_fits = os.path.join(opdir, masktag, input_fits.replace('.fits', f'.{masktag}.fits'))
+    mask_fits = os.path.join(opdir, masktag, tagged_name(input_fits, masktag))
     if os.path.isfile(mask_fits) and not overwrite:
         logging.info(f'[{log_prefix}_{idx}] Skipping {input_fits} (overwrite disabled)')
         return
@@ -186,14 +205,14 @@ def make_mask(input_fits, threshold, boxsize, dilate, trim, regionmask, invert, 
         logging.error(f'Failed to write FITS file: [{log_prefix}_{idx}] Writing mask image {mask_fits}')
 
     if savenoise:
-        noise_fits = os.path.join(opdir, noisetag, input_fits.replace('.fits', f'.{noisetag}.fits'))
+        noise_fits = os.path.join(opdir, noisetag, tagged_name(input_fits, noisetag))
         logging.info(f'[{log_prefix}_{idx}] Writing noise image {noise_fits}')
         f_written = flush_image(noise_image, header, noise_fits)
         if not f_written:
             logging.error(f'Failed to write FITS file: [{log_prefix}_{idx}] Writing noise image {noise_fits}')
 
 
-def make_averaged_mask(input_fits_subset, threshold, boxsize, dilate, invert, trim, regionmask, opdir, masktag, noisetag, savenoise, averagetag, saveaverage, overwrite, idx):
+def make_averaged_mask(input_fits_subset, threshold, boxsize, dilate, trim, regionmask, invert, opdir, masktag, noisetag, savenoise, averagetag, saveaverage, overwrite, idx):
     """
     Create a mask for a sequence of averaged FITS images.
 
@@ -202,6 +221,8 @@ def make_averaged_mask(input_fits_subset, threshold, boxsize, dilate, invert, tr
     threshold (float): Sigma threshold for masking.
     boxsize (int): Box size for background noise estimation.
     dilate (int): Number of dilation iterations.
+    trim (int): Binary erosion iterations to deal with noisy borders
+    regionmask: Region file defining exclusion zones
     invert (bool): Whether to invert the image.
     opdir (str): Output directory.
     masktag (str): Tag for mask files.
@@ -218,7 +239,7 @@ def make_averaged_mask(input_fits_subset, threshold, boxsize, dilate, invert, tr
     nfits = len(input_fits_subset)
     input_fits = input_fits_subset[nfits // 2]
     input_image, header = get_image(input_fits) # Need a WCS for image output and any region masking
-    mask_fits = os.path.join(opdir, masktag, input_fits.replace('.fits', f'.{masktag}.fits'))
+    mask_fits = os.path.join(opdir, masktag, tagged_name(input_fits, masktag))
     if os.path.isfile(mask_fits) and not overwrite:
         logging.info(f'[{log_prefix}_{idx}] Skipping {mask_fits} (overwrite disabled)')
         return
@@ -233,7 +254,7 @@ def make_averaged_mask(input_fits_subset, threshold, boxsize, dilate, invert, tr
         wcs = WCS(header)
         mean_image = apply_region_mask(mean_image, wcs, regionmask)
     logging.info(f'[{log_prefix}_{idx}] Finding islands')
-    mask_image, noise_image = get_mask_and_noise(mean_image, threshold, boxsize, dilate, trim)
+    mask_image, noise_image = get_mask_and_noise(mean_image, threshold, boxsize, trim)
     if dilate > 0:
         mask_image = binary_dilation(mask_image, iterations=dilate)
     logging.info(f'[{log_prefix}_{idx}] Writing mask image {mask_fits}')
@@ -242,14 +263,14 @@ def make_averaged_mask(input_fits_subset, threshold, boxsize, dilate, invert, tr
         logging.error(f'Failed to write FITS file: [{log_prefix}_{idx}] Writing mask image {mask_fits}')
 
     if saveaverage:
-        mean_fits = os.path.join(opdir, averagetag, input_fits.replace('.fits', f'.{averagetag}.fits'))
+        mean_fits = os.path.join(opdir, averagetag, tagged_name(input_fits, averagetag))
         logging.info(f'[{log_prefix}_{idx}] Writing averaged mask image {mean_fits}')
         f_written = flush_image(mean_image, header, mean_fits)
         if not f_written:
             logging.error(f'Failed to write FITS file: [{log_prefix}_{idx}] Writing averaged mask image {mean_fits}')
 
     if savenoise:
-        noise_fits = os.path.join(opdir, noisetag, input_fits.replace('.fits', f'.{noisetag}.fits'))
+        noise_fits = os.path.join(opdir, noisetag, tagged_name(input_fits, noisetag))
         logging.info(f'[{log_prefix}_{idx}] Writing noise image {noise_fits}')
         f_written = flush_image(noise_image, header, noise_fits)
         if not f_written:
@@ -270,17 +291,19 @@ def filter_mask(mask_subset, minchans, specdilate, masktag, filtertag, overwrite
     idx (int): Index for logging.
     """
     
+    log_prefix = 'Filter'
+    idx = str(idx).zfill(5)
+
     try:
 
-        log_prefix = 'Filter'
-        idx = str(idx).zfill(5)
         logging.info(f'[{log_prefix}_{idx}] Worker process {idx} operating on image subset {mask_subset[0]} -- {mask_subset[-1]}')
         template_fits = []
         output_fits = []
         exists = []
 
         for input_fits in mask_subset:
-            filtered_fits = input_fits.replace(masktag, filtertag)
+            filtered_name = tagged_name(os.path.basename(input_fits).replace(f'.{masktag}.fits', '.fits'), filtertag)
+            filtered_fits = os.path.join(os.path.dirname(os.path.dirname(input_fits)), filtertag, filtered_name)
             template_fits.append(input_fits)
             output_fits.append(filtered_fits)
             exists.append(os.path.isfile(filtered_fits))
@@ -308,12 +331,13 @@ def filter_mask(mask_subset, minchans, specdilate, masktag, filtertag, overwrite
             small_islands = np.where(unique_counts < minchans)[0]
             mask = np.isin(labeled_cube, small_islands)
             cube[mask] = False
+            del labeled_cube, mask
 
         # Dilate along spectral axis
-        if specdilate != 0:
+        if specdilate > 0:
             logging.info(f'[{log_prefix}_{idx}] Dilating islands with {specdilate} iterations along spectral axis')
             recon_struct = np.array([1,1,1])[None,None,:]
-            cube = binary_dilation(cube, structure = recon_struct)
+            cube = binary_dilation(cube, structure = recon_struct, iterations = specdilate)
 
         # Write out filtered images
         for i, filtered_fits in enumerate(output_fits):
@@ -326,12 +350,12 @@ def filter_mask(mask_subset, minchans, specdilate, masktag, filtertag, overwrite
                 if not f_written:
                     logging.error(f'Failed to write FITS file: [{log_prefix}_{idx}] Writing {filtered_fits}')
 
-        del labeled_cube
         del cube
         gc.collect()
 
-    except:
-        traceback.print_exc()
+    except Exception:
+        logging.exception(f'[{log_prefix}_{idx}] Filtering failed')
+        raise
 
 
 def count_islands(input_fits, orig_fits, idx):
@@ -346,9 +370,7 @@ def count_islands(input_fits, orig_fits, idx):
     log_prefix = 'Counting'
     idx = str(idx).zfill(5)
     input_image,header = get_image(input_fits)
-    input_image = input_image.byteswap().view(input_image.dtype.newbyteorder())
-#   input_image = input_image.byteswap().newbyteorder()  
-    labeled_mask_image, n_islands = label(input_image)
+    labeled_mask_image, n_islands = label(input_image != 0)
     orig_image,orig_header = get_image(orig_fits)
     rms = np.nanstd(orig_image)
     logging.info(f'[{log_prefix}_{idx}] Channel mask parameters: {input_fits} {n_islands} {rms}')

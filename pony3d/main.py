@@ -7,13 +7,26 @@ import sys
 import glob
 import time
 import numpy as np
-import traceback
 from multiprocessing import Pool
 
 from pony3d.terminal_operations import initialize_logging, hello, spacer
 from pony3d.file_operations import create_directories, natural_sort
 from pony3d.mask_operations import get_tdl, make_mask, make_averaged_mask
 from pony3d.mask_operations import filter_mask, count_islands, extract_islands
+
+
+def run_pool(func, iterable_params, processes, stage, logger, maxtasksperchild=None):
+    """
+    Run func over iterable_params with a multiprocessing Pool.
+    Any exception raised in a worker is logged with its traceback and the run is stopped,
+    rather than being silently swallowed.
+    """
+    with Pool(processes=processes, maxtasksperchild=maxtasksperchild) as pool:
+        try:
+            return pool.starmap(func, iterable_params)
+        except Exception:
+            logger.exception(f'{stage} failed, stopping')
+            sys.exit(1)
 
 
 def main():
@@ -167,11 +180,7 @@ def main():
             [invert]*nfits, [opdir]*nfits, [masktag]*nfits, [noisetag]*nfits,
             [savenoise]*nfits, [overwrite]*nfits, np.arange(nfits)
         )
-        with Pool(processes=j) as pool:
-            try:
-                pool.starmap(make_mask, iterable_params)
-            except Exception as e:
-                logger.error(traceback.print_exception(e))
+        run_pool(make_mask, iterable_params, j, 'Mask making', logger)
     else:
         input_fits_subsets = [
             fits_list[i:min(i + boxcar, nfits)]
@@ -186,11 +195,7 @@ def main():
             [averagetag]*ns, [saveaverage]*ns, [overwrite]*ns, 
             np.arange(len(input_fits_subsets))
         )
-        with Pool(processes=j) as pool:
-            try:
-                pool.starmap(make_averaged_mask, iterable_params)
-            except Exception as e:
-                logger.error(traceback.print_exception(e))
+        run_pool(make_averaged_mask, iterable_params, j, 'Boxcar mask making', logger)
 
     t_proc = time.time()
     # Filter masks
@@ -204,14 +209,10 @@ def main():
         logger.info(f'Filtering masks in {len(mask_subsets)} subset(s)')
         ns = len(mask_subsets)
         iterable_params = zip(
-            mask_subsets, [specdilate]*ns, [minchans]*ns, [masktag]*ns, 
+            mask_subsets, [minchans]*ns, [specdilate]*ns, [masktag]*ns, 
             [filtertag]*ns, [overwrite]*ns, np.arange(ns)
         )
-        with Pool(processes=j) as pool:
-            try:
-                pool.starmap(filter_mask, iterable_params)
-            except Exception as e:
-                logger.error(traceback.print_exception(e))
+        run_pool(filter_mask, iterable_params, j, 'Mask filtering', logger)
 
     t_filter = time.time()
     # Count islands
@@ -223,11 +224,7 @@ def main():
         orig_list = [mask_fits.split('/')[-1].replace(f'.{masktag}', '') for mask_fits in mask_list]
 
     iterable_params = zip(mask_list, orig_list, np.arange(len(mask_list)))
-    with Pool(processes=j) as pool:
-        try:
-            pool.starmap(count_islands, iterable_params)
-        except Exception as e:
-            logger.error(traceback.print_exception(e))
+    run_pool(count_islands, iterable_params, j, 'Island counting', logger)
 
     t_count = time.time()
     # Source extraction
@@ -254,11 +251,7 @@ def main():
             [submasks]*ns, [padspatial]*ns, [padspectral]*ns, [catname]*ns, [cubetag]*ns,
             [overwrite]*ns, np.arange(ns)
         )
-        with Pool(processes=j) as pool:
-            try:
-                pool.starmap(extract_islands, iterable_params)
-            except Exception as e:
-                logger.error(traceback.print_exception(e))
+        run_pool(extract_islands, iterable_params, j, 'Source extraction', logger)
 
         if catalogue:
             tdl = get_tdl()
